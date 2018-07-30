@@ -70,6 +70,7 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 		context:   ctx,
 		config:		runtimeConfig,
 		containers: make(map[string]*Container),
+		processes:  make(map[uint32]vc.Process),
 		events:    make(chan interface{}, 128),
 		ec:        cdshim.Default.Subscribe(),
 		ep:        ep,
@@ -87,7 +88,7 @@ type service struct {
 	context   context.Context
 	sandbox      vc.VCSandbox
 	containers   map[string]*Container
-	processs     map[uint32]vc.Process
+	processes    map[uint32]vc.Process
 	config		 *oci.RuntimeConfig
 	events    chan interface{}
 
@@ -106,7 +107,7 @@ type service struct {
 //get a unique pid in this sandbox
 func (s *service) pid() uint32 {
 	for true {
-		_, ok := s.processs[pidCount]
+		_, ok := s.processes[pidCount]
 		if !ok {
 			break
 		}else {
@@ -267,7 +268,7 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 
 	pid := s.pid()
 	s.containers[r.ID] = newContainer(s, r.ID, r.Bundle, pid, c)
-	s.processs[pid] = c.Process()
+	s.processes[pid] = c.Process()
 
 	stdin, stdout, stderr, err := s.sandbox.IOStream(s.sandbox.ID(), c.ID())
 	if err != nil {
