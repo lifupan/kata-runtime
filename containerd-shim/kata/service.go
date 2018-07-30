@@ -279,6 +279,24 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 
 // Start a process
 func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
+
+	c, ok := s.containers[r.ID]
+	if !ok {
+		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "process does not exist %s", r.ID)
+	}
+
+	//start a sandbox or container, instead of an exec
+	if r.ExecID == "" {
+		_, err := start(r.ID)
+		if err != nil {
+			return nil, errdefs.ToGRPC(err)
+		}
+
+		return &taskAPI.StartResponse{
+			Pid: c.pid,
+		}, nil
+
+	}
 	return nil, errdefs.ErrNotImplemented
 }
 
