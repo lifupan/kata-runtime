@@ -14,6 +14,7 @@ import (
 
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/mount"
 	cdshim "github.com/containerd/containerd/runtime/v2/shim"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
 	eventstypes "github.com/containerd/containerd/api/events"
@@ -27,7 +28,7 @@ import (
 	"golang.org/x/sys/unix"
 	ptypes "github.com/gogo/protobuf/types"
 	"github.com/sirupsen/logrus"
-	"github.com/opencontainers/runtime-spec/specs-go"
+	"path/filepath"
 )
 
 
@@ -240,21 +241,26 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err != nil {
-		return nil, errors.Wrap(err, "create namespace")
+	rootfs := filepath.Join(r.Bundle, "rootfs")
+	defer func() {
+		if err != nil {
+			if err2 := mount.UnmountAll(rootfs, 0); err2 != nil {
+				logrus.WithError(err2).Warn("failed to cleanup rootfs mount")
+			}
+		}
+	}()
+	for _, rm := range r.Rootfs {
+		m := &mount.Mount{
+			Type:    rm.Type,
+			Source:  rm.Source,
+			Options: rm.Options,
+		}
+		if err := m.Mount(rootfs); err != nil {
+			return nil, errors.Wrapf(err, "failed to mount rootfs component %v", m)
+		}
 	}
 
-	var mounts []specs.Mount
-	for _, m := range r.Rootfs {
-		mounts = append(mounts, specs.Mount{
-			Type:    m.Type,
-			Source:  m.Source,
-			Destination:  m.Target,
-			Options: m.Options,
-		})
-	}
-
-	c, err := create(s, r.ID, r.Bundle, mounts, !r.Terminal, s.config)
+	c, err := create(s, r.ID, r.Bundle, !r.Terminal, s.config)
 	if err != nil {
 		return nil, err
 	}

@@ -15,10 +15,9 @@ import (
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	vf "github.com/kata-containers/runtime/virtcontainers/factory"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
-	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-func create(s *service, containerID, bundlePath string, mounts []specs.Mount, detach bool,
+func create(s *service, containerID, bundlePath string, detach bool,
 	runtimeConfig *oci.RuntimeConfig) (vc.VCContainer, error) {
 	var err error
 
@@ -31,9 +30,6 @@ func create(s *service, containerID, bundlePath string, mounts []specs.Mount, de
 	if err != nil {
 		return nil, err
 	}
-
-	//merge the mounts
-	ociSpec.Mounts = append(ociSpec.Mounts, mounts...)
 
 	containerType, err := ociSpec.ContainerType()
 	if err != nil {
