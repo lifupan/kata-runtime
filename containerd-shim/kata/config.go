@@ -413,11 +413,6 @@ func loadConfiguration() (config *oci.RuntimeConfig, err error) {
 		Msize9p:               defaultMsize9p,
 	}
 
-	err = config.InterNetworkModel.SetModel(defaultInterNetworkingModel)
-	if err != nil {
-		return  config, err
-	}
-
 	defaultAgentConfig := vc.KataAgentConfig{LongLiveConn: true}
 
 	config = &oci.RuntimeConfig{
@@ -427,6 +422,11 @@ func loadConfiguration() (config *oci.RuntimeConfig, err error) {
 		AgentConfig:      defaultAgentConfig,
 		ProxyType:        defaultProxy,
 		ShimType:         defaultShim,
+	}
+
+	err = config.InterNetworkModel.SetModel(defaultInterNetworkingModel)
+	if err != nil {
+		return  config, err
 	}
 
 	var resolved string
