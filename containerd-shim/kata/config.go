@@ -358,6 +358,12 @@ func newFactoryConfig(f factory) (oci.FactoryConfig, error) {
 	return oci.FactoryConfig{Template: f.Template}, nil
 }
 
+func newShimConfig(s shim) (vc.ShimConfig, error) {
+	return vc.ShimConfig{
+		Debug: s.Debug,
+	}, nil
+}
+
 func updateRuntimeConfig(configPath string, tomlConf tomlConfig, config *oci.RuntimeConfig) error {
 	for k, hypervisor := range tomlConf.Hypervisor {
 		switch k {
@@ -371,6 +377,15 @@ func updateRuntimeConfig(configPath string, tomlConf tomlConfig, config *oci.Run
 
 			config.HypervisorConfig = hConfig
 		}
+	}
+
+	for _, shim := range tomlConf.Shim {
+		shConfig, err := newShimConfig(shim)
+		if err != nil {
+			return fmt.Errorf("%v: %v", configPath, err)
+		}
+
+		config.ShimConfig = shConfig
 	}
 
 	fConfig, err := newFactoryConfig(tomlConf.Factory)

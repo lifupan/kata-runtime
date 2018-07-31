@@ -166,7 +166,9 @@ func createSandbox(ociSpec oci.CompatOCISpec, runtimeConfig oci.RuntimeConfig,
 		return nil, err
 	}
 
-	sandbox, err := vci.CreateSandbox(sandboxConfig)
+	sandboxConfig.Stateful = true
+
+	sandbox, err := vci.RunSandbox(sandboxConfig)
 	if err != nil {
 		return nil, err
 	}

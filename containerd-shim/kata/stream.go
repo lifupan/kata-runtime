@@ -99,7 +99,7 @@ func ioCopy(tty *TtyIO, stdinPipe io.WriteCloser, stdoutPipe, stderrPipe io.Read
 		go func() {
 			p := bufPool.Get().(*[]byte)
 			defer bufPool.Put(p)
-			io.CopyBuffer(tty.Stderr, stderrPipe, *p)
+			_, _ = io.CopyBuffer(tty.Stderr, stderrPipe, *p)
 			wg.Done()
 		}()
 	}

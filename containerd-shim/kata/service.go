@@ -14,6 +14,7 @@ import (
 
 	eventstypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/namespaces"
@@ -76,6 +77,8 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 	}
 
 	go s.forward(publisher)
+
+	vci.SetLogger(logrus.WithField("ID", id))
 
 	return s, nil
 }
@@ -236,7 +239,7 @@ func (s *service) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) 
 	}, nil
 }
 
-// Create a new initial process and container with the underlying OCI runtime
+// Create a new sandbox or container with the underlying OCI runtime
 func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -284,7 +287,8 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 
 	//start a sandbox or container, instead of an exec
 	if r.ExecID == "" {
-		_, err := start(r.ID)
+
+		_, err := start(s, r.ID, r.ExecID)
 		if err != nil {
 			return nil, errdefs.ToGRPC(err)
 		}
@@ -293,7 +297,6 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 		if err != nil {
 			return nil, err
 		}
-
 		tty, err := newTtyIO(ctx, c.stdin, c.stdout, c.stderr, c.terminal)
 
 		go ioCopy(tty, stdin, stdout, stderr)
@@ -308,73 +311,105 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 
 // Delete the initial process and container
 func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Delete id=%s", r.ID)
 }
 
 // Exec an additional process inside the container
 func (s *service) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Exec")
 }
 
 // ResizePty of a process
 func (s *service) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+//	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service ResizePty")
+	return  empty, nil
 }
 
 // State returns runtime state information for a process
 func (s *service) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	c, _ := s.containers[r.ID]
+
+	vcstatus, _ := s.sandbox.StatusContainer(r.ID)
+	
+	status := task.StatusUnknown
+	switch vcstatus.State.State {
+	case "ready":
+		status = task.StatusCreated
+	case "running":
+		status = task.StatusRunning
+	case "stopped":
+		status = task.StatusStopped
+	case "paused":
+		status = task.StatusPaused
+	}
+	return &taskAPI.StateResponse{
+		ID:         c.id,
+		Bundle:     c.bundle,
+		Pid:        c.pid,
+		Status:     status,
+		Stdin:      c.stdin,
+		Stdout:     c.stdout,
+		Stderr:     c.stderr,
+		Terminal:   c.terminal,
+		ExitStatus: uint32(0),
+	}, nil
 }
 
 // Pause the container
 func (s *service) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Pause")
 }
 
 // Resume the container
 func (s *service) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Resume")
 }
 
 // Kill a process with the provided signal
 func (s *service) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "Kill")
 }
 
 // Pids returns all pids inside the container
 func (s *service) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.PidsResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Pids")
 }
 
 // CloseIO of a process
 func (s *service) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service CloseIO")
 }
 
 // Checkpoint the container
 func (s *service) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Checkpoint")
 }
 
 // Connect returns shim information such as the shim's pid
 func (s *service) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Connect")
 }
 
 func (s *service) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Shutdown")
 }
 
 func (s *service) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Stats")
 }
 
 // Update a running container
 func (s *service) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
-	return nil, errdefs.ErrNotImplemented
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Update")
 }
 
 // Wait for a process to exit
 func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
-	return nil, errdefs.ErrNotImplemented
+	ret, err := s.sandbox.WaitProcess(r.ID, r.ID)
+	return &taskAPI.WaitResponse{
+		ExitStatus: uint32(ret),
+	}, err
 }
