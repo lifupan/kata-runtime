@@ -8,9 +8,9 @@
 package kata
 
 import (
-vc "github.com/kata-containers/runtime/virtcontainers"
-"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
 	"fmt"
+	vc "github.com/kata-containers/runtime/virtcontainers"
+	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
 )
 
 func start(containerID string) (vc.VCContainer, error) {
@@ -38,7 +38,7 @@ func start(containerID string) (vc.VCContainer, error) {
 		if c == nil {
 			return nil, fmt.Errorf("Canot get container %s from sandbox %s", containerID, containerID)
 		}
-		return c , nil
+		return c, nil
 	}
 
 	c, err := vci.StartContainer(sandboxID, containerID)

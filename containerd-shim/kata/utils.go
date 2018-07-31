@@ -7,13 +7,12 @@
 package kata
 
 import (
-"bytes"
-"fmt"
-"io/ioutil"
-"os"
-"path/filepath"
-"strings"
-
+	"bytes"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 const (

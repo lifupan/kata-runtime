@@ -9,8 +9,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/containerd/fifo"
 	"context"
+	"github.com/containerd/fifo"
 )
 
 type TtyIO struct {
@@ -54,7 +54,7 @@ func newTtyIO(ctx context.Context, stdin, stdout, stderr string, console bool) (
 		return nil, err
 	}
 
-	if ! console {
+	if !console {
 		errw, err = fifo.OpenFifo(ctx, stderr, syscall.O_WRONLY, 0)
 		if err != nil {
 			return nil, err
@@ -62,15 +62,13 @@ func newTtyIO(ctx context.Context, stdin, stdout, stderr string, console bool) (
 	}
 
 	ttyIO := &TtyIO{
-		Stdin: in,
+		Stdin:  in,
 		Stdout: outw,
 		Stderr: errw,
 	}
 
 	return ttyIO, nil
 }
-
-
 
 func ioCopy(tty *TtyIO, stdinPipe io.WriteCloser, stdoutPipe, stderrPipe io.Reader) {
 	var wg sync.WaitGroup

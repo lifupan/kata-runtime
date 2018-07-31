@@ -8,13 +8,13 @@
 package kata
 
 import (
-	"strings"
 	"fmt"
+	"strings"
 
-	"github.com/sirupsen/logrus"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	vf "github.com/kata-containers/runtime/virtcontainers/factory"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+	"github.com/sirupsen/logrus"
 )
 
 func create(s *service, containerID, bundlePath string, detach bool,

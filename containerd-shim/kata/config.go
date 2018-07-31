@@ -389,8 +389,8 @@ func updateRuntimeConfig(configPath string, tomlConf tomlConfig, config *oci.Run
 // error, all paths are valid at the time of the call.
 func loadConfiguration() (config *oci.RuntimeConfig, err error) {
 	defaultHypervisorConfig := vc.HypervisorConfig{
-		HypervisorPath:        defaultHypervisorPath,
-		KernelPath:            defaultKernelPath,
+		HypervisorPath: defaultHypervisorPath,
+		KernelPath:     defaultKernelPath,
 
 		//use the initrd instead of image by default, this
 		//default can be changed by configure file.
@@ -426,7 +426,7 @@ func loadConfiguration() (config *oci.RuntimeConfig, err error) {
 
 	err = config.InterNetworkModel.SetModel(defaultInterNetworkingModel)
 	if err != nil {
-		return  config, err
+		return config, err
 	}
 
 	var resolved string
@@ -454,7 +454,7 @@ func loadConfiguration() (config *oci.RuntimeConfig, err error) {
 		}
 
 		if err := updateRuntimeConfig(resolved, tomlConf, config); err != nil {
-			return  config, err
+			return config, err
 		}
 	}
 

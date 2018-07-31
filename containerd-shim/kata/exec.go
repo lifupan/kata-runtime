@@ -12,5 +12,5 @@ type Exec struct {
 	Terminal  bool
 	ExitCode  uint8
 
-	finChan   chan bool
+	finChan chan bool
 }

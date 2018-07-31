@@ -5,32 +5,31 @@
 package kata
 
 import (
+	"context"
 	"os"
 	"os/exec"
-	"context"
 	"sync"
 	"syscall"
 	"time"
 
+	eventstypes "github.com/containerd/containerd/api/events"
+	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events"
-	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/mount"
+	"github.com/containerd/containerd/namespaces"
+	cdruntime "github.com/containerd/containerd/runtime"
 	cdshim "github.com/containerd/containerd/runtime/v2/shim"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
-	eventstypes "github.com/containerd/containerd/api/events"
-	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
-	"github.com/containerd/containerd/errdefs"
-	vc "github.com/kata-containers/runtime/virtcontainers"
-	cdruntime "github.com/containerd/containerd/runtime"
 	runcC "github.com/containerd/go-runc"
+	vc "github.com/kata-containers/runtime/virtcontainers"
+	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
 
-	"github.com/pkg/errors"
-	"golang.org/x/sys/unix"
 	ptypes "github.com/gogo/protobuf/types"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 	"path/filepath"
 )
-
 
 var (
 	empty   = &ptypes.Empty{}
@@ -66,14 +65,14 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 	}
 
 	s := &service{
-		id:        id,
-		context:   ctx,
-		config:		runtimeConfig,
+		id:         id,
+		context:    ctx,
+		config:     runtimeConfig,
 		containers: make(map[string]*Container),
 		processes:  make(map[uint32]vc.Process),
-		events:    make(chan interface{}, 128),
-		ec:        cdshim.Default.Subscribe(),
-		ep:        ep,
+		events:     make(chan interface{}, 128),
+		ec:         cdshim.Default.Subscribe(),
+		ep:         ep,
 	}
 
 	go s.forward(publisher)
@@ -85,21 +84,21 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 type service struct {
 	mu sync.Mutex
 
-	context   context.Context
-	sandbox      vc.VCSandbox
-	containers   map[string]*Container
-	processes    map[uint32]vc.Process
-	config		 *oci.RuntimeConfig
-	events    chan interface{}
+	context    context.Context
+	sandbox    vc.VCSandbox
+	containers map[string]*Container
+	processes  map[uint32]vc.Process
+	config     *oci.RuntimeConfig
+	events     chan interface{}
 
 	//When the sandbox was created, it will be closed
 	//to notify other goroutines
 	completed chan struct{}
 
 	//TODO: replace runcC.Exit with a general Exit in shim module
-	ec        chan runcC.Exit
+	ec chan runcC.Exit
 
-	ep        *epoller
+	ep *epoller
 
 	id string
 }
@@ -110,7 +109,7 @@ func (s *service) pid() uint32 {
 		_, ok := s.processes[pidCount]
 		if !ok {
 			break
-		}else {
+		} else {
 			pidCount += 1
 			//if it overflows, recount from 5
 			if pidCount < 5 {
@@ -118,7 +117,7 @@ func (s *service) pid() uint32 {
 			}
 		}
 	}
-	return 	pidCount
+	return pidCount
 }
 
 func newCommand(ctx context.Context, containerdBinary, containerdAddress string) (*exec.Cmd, error) {
@@ -267,17 +266,8 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 	}
 
 	pid := s.pid()
-	s.containers[r.ID] = newContainer(s, r.ID, r.Bundle, pid, c)
+	s.containers[r.ID] = newContainer(s, r, pid, c)
 	s.processes[pid] = c.Process()
-
-	stdin, stdout, stderr, err := s.sandbox.IOStream(s.sandbox.ID(), c.ID())
-	if err != nil {
-		return nil, err
-	}
-
-	tty, err := newTtyIO(ctx, r.Stdin, r.Stdout, r.Stderr, r.Terminal)
-
-	go ioCopy(tty, stdin, stdout, stderr)
 
 	return &taskAPI.CreateTaskResponse{
 		Pid: pid,
@@ -298,6 +288,15 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 		if err != nil {
 			return nil, errdefs.ToGRPC(err)
 		}
+
+		stdin, stdout, stderr, err := s.sandbox.IOStream(s.sandbox.ID(), c.id)
+		if err != nil {
+			return nil, err
+		}
+
+		tty, err := newTtyIO(ctx, c.stdin, c.stdout, c.stderr, c.terminal)
+
+		go ioCopy(tty, stdin, stdout, stderr)
 
 		return &taskAPI.StartResponse{
 			Pid: c.pid,

@@ -364,4 +364,3 @@ func delContainerIDMapping(containerID string) error {
 
 	return os.RemoveAll(path)
 }
-

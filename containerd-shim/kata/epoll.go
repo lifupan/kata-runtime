@@ -18,15 +18,15 @@
 package kata
 
 import (
-"context"
-"sync"
+	"context"
+	"sync"
 
-"github.com/containerd/cgroups"
-eventstypes "github.com/containerd/containerd/api/events"
-"github.com/containerd/containerd/events"
-cdruntime "github.com/containerd/containerd/runtime"
-"github.com/sirupsen/logrus"
-"golang.org/x/sys/unix"
+	"github.com/containerd/cgroups"
+	eventstypes "github.com/containerd/containerd/api/events"
+	"github.com/containerd/containerd/events"
+	cdruntime "github.com/containerd/containerd/runtime"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 func newOOMEpoller(publisher events.Publisher) (*epoller, error) {
@@ -120,4 +120,3 @@ func flush(fd uintptr) error {
 	_, err := unix.Read(int(fd), buf[:])
 	return err
 }
-
