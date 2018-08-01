@@ -13,15 +13,14 @@ import (
 	"time"
 
 	eventstypes "github.com/containerd/containerd/api/events"
-	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/api/types/task"
+	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/namespaces"
 	cdruntime "github.com/containerd/containerd/runtime"
 	cdshim "github.com/containerd/containerd/runtime/v2/shim"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
-	runcC "github.com/containerd/go-runc"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
 
@@ -31,6 +30,8 @@ import (
 	"golang.org/x/sys/unix"
 	"path/filepath"
 )
+
+const bufferSize = 32
 
 var (
 	empty   = &ptypes.Empty{}
@@ -72,15 +73,25 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 		containers: make(map[string]*Container),
 		processes:  make(map[uint32]vc.Process),
 		events:     make(chan interface{}, 128),
-		ec:         cdshim.Default.Subscribe(),
+		ec:         make(chan Exit, bufferSize),
 		ep:         ep,
 	}
+
+	go s.processExits()
 
 	go s.forward(publisher)
 
 	vci.SetLogger(logrus.WithField("ID", id))
 
 	return s, nil
+}
+
+type Exit struct {
+	id        string
+	execid    string
+	pid       int
+	status    int
+	timestamp time.Time
 }
 
 // service is the shim implementation of a remote shim over GRPC
@@ -99,7 +110,7 @@ type service struct {
 	completed chan struct{}
 
 	//TODO: replace runcC.Exit with a general Exit in shim module
-	ec chan runcC.Exit
+	ec chan Exit
 
 	ep *epoller
 
@@ -299,7 +310,7 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 		}
 		tty, err := newTtyIO(ctx, c.stdin, c.stdout, c.stderr, c.terminal)
 
-		go ioCopy(tty, stdin, stdout, stderr)
+		go ioCopy(c.exitch, tty, stdin, stdout, stderr)
 
 		return &taskAPI.StartResponse{
 			Pid: c.pid,
@@ -321,19 +332,19 @@ func (s *service) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*pty
 
 // ResizePty of a process
 func (s *service) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (*ptypes.Empty, error) {
-//	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service ResizePty")
-	return  empty, nil
+	//	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service ResizePty")
+	return empty, nil
 }
 
 // State returns runtime state information for a process
 func (s *service) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.StateResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	c, _ := s.containers[r.ID]
 
 	vcstatus, _ := s.sandbox.StatusContainer(r.ID)
-	
+
 	status := task.StatusUnknown
 	switch vcstatus.State.State {
 	case "ready":
@@ -408,8 +419,51 @@ func (s *service) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*pt
 
 // Wait for a process to exit
 func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
-	ret, err := s.sandbox.WaitProcess(r.ID, r.ID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.containers[r.ID]
+	if !ok {
+		return &taskAPI.WaitResponse{
+			ExitStatus: uint32(0),
+		}, errdefs.ToGRPCf(errdefs.ErrNotFound, "container does not exist %s", r.ID)
+	}
+
+	if r.ExecID != "" {
+		//wait until the io closed, then wait the container
+		<-c.exitch
+		ret, err := s.sandbox.WaitProcess(r.ID, r.ID)
+		go cReap(s, int(c.pid), int(ret), r.ID, "")
+		return &taskAPI.WaitResponse{
+			ExitStatus: uint32(ret),
+		}, err
+	}
+
 	return &taskAPI.WaitResponse{
-		ExitStatus: uint32(ret),
-	}, err
+		ExitStatus: uint32(0),
+	}, nil
+}
+
+func (s *service) processExits() {
+	for e := range s.ec {
+		s.checkProcesses(e)
+	}
+}
+
+func (s *service) checkProcesses(e Exit) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := e.execid
+	if id == "" {
+		id = e.id
+	}
+	s.events <- &eventstypes.TaskExit{
+		ContainerID: e.id,
+		ID:          id,
+		Pid:         uint32(e.pid),
+		ExitStatus:  uint32(e.status),
+		ExitedAt:    e.timestamp,
+	}
+	return
 }

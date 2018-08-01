@@ -9,6 +9,7 @@ import (
 	"github.com/containerd/containerd/api/types/task"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
 	vc "github.com/kata-containers/runtime/virtcontainers"
+	"go/types"
 )
 
 type Container struct {
@@ -19,6 +20,7 @@ type Container struct {
 	stdout   string
 	stderr   string
 	terminal bool
+	exitch   chan struct{}
 
 	bundle    string
 	execs     map[string]*Exec
@@ -36,6 +38,7 @@ func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32, containe
 		stdout:   r.Stdout,
 		stderr:   r.Stderr,
 		terminal: r.Terminal,
+		exitch:   make(chan struct{}),
 	}
 	return c
 }

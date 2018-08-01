@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -109,4 +110,16 @@ func writeFile(filePath string, data string, fileMode os.FileMode) error {
 // isEmptyString return if string is empty
 func isEmptyString(b []byte) bool {
 	return len(bytes.Trim(b, "\n")) == 0
+}
+
+func cReap(s *service, pid, status int, id, execid string) {
+	now := time.Now()
+
+	s.ec <- Exit{
+		timestamp: now,
+		pid:       pid,
+		status:    status,
+		id:        id,
+		execid:    execid,
+	}
 }
