@@ -25,6 +25,11 @@ func start(s *service, containerID, execID string) (vc.VCContainer, error) {
 		return nil, err
 	}
 	if containerType.IsSandbox() {
+		_, err := vc.StartSandbox(s.sandbox.ID())
+		if err != nil {
+			return nil, err
+		}
+
 		c := s.sandbox.GetContainer(containerID)
 
 		if c == nil {

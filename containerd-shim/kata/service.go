@@ -105,10 +105,6 @@ type service struct {
 	config     *oci.RuntimeConfig
 	events     chan interface{}
 
-	//When the sandbox was created, it will be closed
-	//to notify other goroutines
-	completed chan struct{}
-
 	//TODO: replace runcC.Exit with a general Exit in shim module
 	ec chan Exit
 
@@ -280,7 +276,10 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 	}
 
 	pid := s.pid()
-	s.containers[r.ID] = newContainer(s, r, pid, c)
+	container := newContainer(s, r, pid, c)
+	container.status = task.StatusCreated
+
+	s.containers[r.ID] = container
 	s.processes[pid] = c.Process()
 
 	return &taskAPI.CreateTaskResponse{
