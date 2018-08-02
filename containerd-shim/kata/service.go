@@ -324,7 +324,41 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 
 // Delete the initial process and container
 func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
-	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Delete id=%s", r.ID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, err := s.getContainer(r.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if r.ExecID == "" {
+		status, err := s.sandbox.StatusContainer(r.ID)
+		if err != nil {
+			return nil, err
+		}
+		if status.State.State == vc.StateRunning {
+			_, err = vci.StopContainer(s.sandbox.ID(), r.ID)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		_, err = s.sandbox.DeleteContainer(r.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		delete(s.processes, c.pid)
+		delete(s.containers, r.ID)
+
+		return &taskAPI.DeleteResponse{
+			ExitStatus: c.exit,
+			ExitedAt:   c.time,
+			Pid:        c.pid,
+		}, nil
+	}
+	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Delete id=%s, execid=%s", r.ID, r.ExecID)
 }
 
 // Exec an additional process inside the container
@@ -485,8 +519,9 @@ func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.Wa
 		ret, err := s.sandbox.WaitProcess(r.ID, r.ID)
 		c.status = task.StatusStopped
 		c.exit = uint32(ret)
+		c.time = time.Now()
 
-		go cReap(s, int(c.pid), int(ret), r.ID, "")
+		go cReap(s, int(c.pid), int(ret), r.ID, "", c.time,)
 		return &taskAPI.WaitResponse{
 			ExitStatus: uint32(ret),
 		}, err

@@ -9,6 +9,7 @@ import (
 	"github.com/containerd/containerd/api/types/task"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
 	vc "github.com/kata-containers/runtime/virtcontainers"
+	"time"
 )
 
 type Container struct {
@@ -26,6 +27,7 @@ type Container struct {
 	container vc.VCContainer
 	status    task.Status
 	exit      uint32
+	time      time.Time
 }
 
 func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32, container vc.VCContainer) *Container {
@@ -40,6 +42,7 @@ func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32, containe
 		terminal: r.Terminal,
 		status:   task.StatusCreated,
 		exitch:   make(chan struct{}),
+		time:     time.Now(),
 	}
 	return c
 }

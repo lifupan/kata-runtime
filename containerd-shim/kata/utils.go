@@ -112,11 +112,9 @@ func isEmptyString(b []byte) bool {
 	return len(bytes.Trim(b, "\n")) == 0
 }
 
-func cReap(s *service, pid, status int, id, execid string) {
-	now := time.Now()
-
+func cReap(s *service, pid, status int, id, execid string, exitat time.Time) {
 	s.ec <- Exit{
-		timestamp: now,
+		timestamp: exitat,
 		pid:       pid,
 		status:    status,
 		id:        id,
