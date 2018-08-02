@@ -306,7 +306,7 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 
 		c.status = task.StatusRunning
 
-		stdin, stdout, stderr, err := s.sandbox.IOStream(s.sandbox.ID(), c.id)
+		stdin, stdout, stderr, err := s.sandbox.IOStream(c.id, c.id)
 		if err != nil {
 			return nil, err
 		}
