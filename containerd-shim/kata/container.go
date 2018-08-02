@@ -25,6 +25,7 @@ type Container struct {
 	execs     map[string]*Exec
 	container vc.VCContainer
 	status    task.Status
+	exit      uint32
 }
 
 func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32, container vc.VCContainer) *Container {
@@ -37,6 +38,7 @@ func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32, containe
 		stdout:   r.Stdout,
 		stderr:   r.Stderr,
 		terminal: r.Terminal,
+		status:   task.StatusCreated,
 		exitch:   make(chan struct{}),
 	}
 	return c
