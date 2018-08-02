@@ -508,9 +508,9 @@ func (s *service) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*pt
 // Wait for a process to exit
 func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	c, err := s.getContainer(r.ID)
+	s.mu.Unlock()
+
 	if err != nil {
 		return &taskAPI.WaitResponse{
 			ExitStatus: uint32(0),
