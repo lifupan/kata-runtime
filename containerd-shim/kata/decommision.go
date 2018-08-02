@@ -14,7 +14,7 @@ type sandboxOp func(sb vc.VCSandbox) error
 
 func pause(sandbox vc.VCSandbox, container vc.VCContainer, containerType vc.ContainerType) error {
 	var err error
-	
+
 	switch containerType {
 	case vc.PodSandbox:
 		err := sandbox.Pause()
@@ -34,7 +34,7 @@ func pause(sandbox vc.VCSandbox, container vc.VCContainer, containerType vc.Cont
 
 func resume(sandbox vc.VCSandbox, container vc.VCContainer, containerType vc.ContainerType) error {
 	var err error
-	
+
 	switch containerType {
 	case vc.PodSandbox:
 		err := sandbox.Resume()

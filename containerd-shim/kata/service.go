@@ -333,24 +333,10 @@ func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAP
 	}
 
 	if r.ExecID == "" {
-		status, err := s.sandbox.StatusContainer(r.ID)
+		err = deleteContainer(s, c)
 		if err != nil {
 			return nil, err
 		}
-		if status.State.State == vc.StateRunning {
-			_, err = vci.StopContainer(s.sandbox.ID(), r.ID)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		_, err = s.sandbox.DeleteContainer(r.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		delete(s.processes, c.pid)
-		delete(s.containers, r.ID)
 
 		return &taskAPI.DeleteResponse{
 			ExitStatus: c.exit,
@@ -416,7 +402,7 @@ func (s *service) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.E
 
 	if err == nil {
 		c.status = task.StatusPaused
-	}else {
+	} else {
 		c.status = task.StatusUnknown
 	}
 
@@ -441,7 +427,7 @@ func (s *service) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes
 	err = resume(s.sandbox, c.container, containerType)
 	if err == nil {
 		c.status = task.StatusRunning
-	}else{
+	} else {
 		c.status = task.StatusUnknown
 	}
 
@@ -461,7 +447,7 @@ func (s *service) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Emp
 	err = kill(s.sandbox, c.container, r.ExecID, r.Signal, r.All)
 	if err == nil {
 		c.status = task.StatusStopped
-	}else{
+	} else {
 		c.status = task.StatusUnknown
 	}
 
@@ -489,6 +475,9 @@ func (s *service) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*task
 }
 
 func (s *service) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
+
+	os.Exit(0)
+	return empty, nil
 	return nil, errdefs.ToGRPCf(errdefs.ErrNotImplemented, "service Shutdown")
 }
 
@@ -521,7 +510,7 @@ func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.Wa
 		c.exit = uint32(ret)
 		c.time = time.Now()
 
-		go cReap(s, int(c.pid), int(ret), r.ID, "", c.time,)
+		go cReap(s, int(c.pid), int(ret), r.ID, "", c.time)
 		return &taskAPI.WaitResponse{
 			ExitStatus: uint32(ret),
 		}, err
@@ -556,7 +545,7 @@ func (s *service) checkProcesses(e Exit) {
 	return
 }
 
-func (s *service) getContainer(id string) (*Container, error){
+func (s *service) getContainer(id string) (*Container, error) {
 	c := s.containers[id]
 
 	if c == nil {
