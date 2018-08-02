@@ -18,7 +18,7 @@ func deleteContainer(s *service, c *Container) error {
 	if err != nil {
 		return err
 	}
-	if status.State.State == vc.StateRunning {
+	if status.State.State != vc.StateStopped {
 		_, err = vci.StopContainer(s.sandbox.ID(), c.id)
 		if err != nil {
 			return err
