@@ -9,7 +9,6 @@ import (
 	"github.com/containerd/containerd/api/types/task"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
 	vc "github.com/kata-containers/runtime/virtcontainers"
-	"go/types"
 )
 
 type Container struct {

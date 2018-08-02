@@ -429,7 +429,7 @@ func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.Wa
 		}, errdefs.ToGRPCf(errdefs.ErrNotFound, "container does not exist %s", r.ID)
 	}
 
-	if r.ExecID != "" {
+	if r.ExecID == "" {
 		//wait until the io closed, then wait the container
 		<-c.exitch
 		ret, err := s.sandbox.WaitProcess(r.ID, r.ID)

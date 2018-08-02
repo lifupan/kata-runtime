@@ -72,6 +72,7 @@ func newTtyIO(ctx context.Context, stdin, stdout, stderr string, console bool) (
 
 func ioCopy(exitch chan struct{}, tty *TtyIO, stdinPipe io.WriteCloser, stdoutPipe, stderrPipe io.Reader) {
 	var wg sync.WaitGroup
+	var closeOnce sync.Once
 
 	if tty.Stdin != nil {
 		wg.Add(1)
@@ -91,6 +92,7 @@ func ioCopy(exitch chan struct{}, tty *TtyIO, stdinPipe io.WriteCloser, stdoutPi
 			defer bufPool.Put(p)
 			io.CopyBuffer(tty.Stdout, stdoutPipe, *p)
 			wg.Done()
+			closeOnce.Do(tty.Close)
 		}()
 	}
 
@@ -105,6 +107,6 @@ func ioCopy(exitch chan struct{}, tty *TtyIO, stdinPipe io.WriteCloser, stdoutPi
 	}
 
 	wg.Wait()
-	tty.Close()
+	closeOnce.Do(tty.Close)
 	close(exitch)
 }
