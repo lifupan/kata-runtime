@@ -291,9 +291,9 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 // Start a process
 func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
 
-	c, ok := s.containers[r.ID]
-	if !ok {
-		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "process does not exist %s", r.ID)
+	c, err := s.getContainer(r.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	//start a sandbox or container, instead of an exec
@@ -343,7 +343,10 @@ func (s *service) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	c, _ := s.containers[r.ID]
+	c, err := s.getContainer(r.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	return &taskAPI.StateResponse{
 		ID:         c.id,
@@ -363,9 +366,9 @@ func (s *service) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.E
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	c, ok := s.containers[r.ID]
-	if !ok {
-		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container does not exist %s", r.ID)
+	c, err := s.getContainer(r.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	containerType, err := oci.GetContainerType(s.containers[r.ID].container.GetAnnotations())
@@ -391,9 +394,9 @@ func (s *service) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	c, ok := s.containers[r.ID]
-	if !ok {
-		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container does not exist %s", r.ID)
+	c, err := s.getContainer(r.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	containerType, err := oci.GetContainerType(s.containers[r.ID].container.GetAnnotations())
@@ -416,12 +419,12 @@ func (s *service) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Emp
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	c, ok := s.containers[r.ID]
-	if !ok {
-		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container does not exist %s", r.ID)
+	c, err := s.getContainer(r.ID)
+	if err != nil {
+		return nil, err
 	}
 
-	err := kill(s.sandbox, c.container, r.ExecID, r.Signal, r.All)
+	err = kill(s.sandbox, c.container, r.ExecID, r.Signal, r.All)
 	if err == nil {
 		c.status = task.StatusStopped
 	}else{
@@ -469,11 +472,11 @@ func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.Wa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	c, ok := s.containers[r.ID]
-	if !ok {
+	c, err := s.getContainer(r.ID)
+	if err != nil {
 		return &taskAPI.WaitResponse{
 			ExitStatus: uint32(0),
-		}, errdefs.ToGRPCf(errdefs.ErrNotFound, "container does not exist %s", r.ID)
+		}, err
 	}
 
 	if r.ExecID == "" {
@@ -516,4 +519,14 @@ func (s *service) checkProcesses(e Exit) {
 		ExitedAt:    e.timestamp,
 	}
 	return
+}
+
+func (s *service) getContainer(id string) (*Container, error){
+	c := s.containers[id]
+
+	if c == nil {
+		return nil, errdefs.ToGRPCf(errdefs.ErrNotFound, "container does not exist %s", id)
+	}
+
+	return c, nil
 }
