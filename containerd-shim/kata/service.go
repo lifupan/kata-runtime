@@ -291,6 +291,8 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 
 // Start a process
 func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	c, err := s.getContainer(r.ID)
 	if err != nil {
@@ -314,6 +316,12 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 		tty, err := newTtyIO(ctx, c.stdin, c.stdout, c.stderr, c.terminal)
 
 		go ioCopy(c.exitch, tty, stdin, stdout, stderr)
+
+		//if the container is run detachted, containerd will not wait it, thus
+		//its needs to wait it here.
+		if !c.terminal {
+			go wait(s, c, r.ExecID)
+		}
 
 		return &taskAPI.StartResponse{
 			Pid: c.pid,
@@ -553,23 +561,11 @@ func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.Wa
 		}, err
 	}
 
-	if r.ExecID == "" {
-		//wait until the io closed, then wait the container
-		<-c.exitch
-		ret, err := s.sandbox.WaitProcess(r.ID, r.ID)
-		c.status = task.StatusStopped
-		c.exit = uint32(ret)
-		c.time = time.Now()
-
-		go cReap(s, int(c.pid), int(ret), r.ID, "", c.time)
-		return &taskAPI.WaitResponse{
-			ExitStatus: uint32(ret),
-		}, err
-	}
+	ret, err := wait(s, c, r.ExecID)
 
 	return &taskAPI.WaitResponse{
-		ExitStatus: uint32(0),
-	}, nil
+		ExitStatus: uint32(ret),
+	}, err
 }
 
 func (s *service) processExits() {

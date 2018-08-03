@@ -10,6 +10,7 @@ import (
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"time"
+	"sync"
 )
 
 type Container struct {
@@ -28,6 +29,8 @@ type Container struct {
 	status    task.Status
 	exit      uint32
 	time      time.Time
+
+	mu         sync.Mutex
 }
 
 func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32, container vc.VCContainer) *Container {
