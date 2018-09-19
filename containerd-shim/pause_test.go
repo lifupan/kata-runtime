@@ -4,40 +4,37 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"context"
-	"io/ioutil"
-	"os"
 	"testing"
 
 	"github.com/containerd/containerd/namespaces"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
+
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/vcmock"
+
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPauseContainerSuccess(t *testing.T) {
 	assert := assert.New(t)
+	var err error
 
 	sandbox := &vcmock.Sandbox{
 		MockID: testSandboxID,
 	}
 
-	path, err := createTempContainerIDMapping(testContainerID, testSandboxID)
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-
-	testingImpl.PauseContainerFunc = func(sandboxID, containerID string) error {
+	testingImpl.PauseContainerFunc = func(ctx context.Context, sandboxID, containerID string) error {
 		return nil
 	}
 	defer func() {
 		testingImpl.PauseContainerFunc = nil
 	}()
 
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID:          testContainerID,
 			Annotations: make(map[string]string),
@@ -60,7 +57,7 @@ func TestPauseContainerSuccess(t *testing.T) {
 	reqCreate := &taskAPI.CreateTaskRequest{
 		ID: testContainerID,
 	}
-	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid)
+	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid, "", nil)
 	assert.NoError(err)
 
 	reqPause := &taskAPI.PauseRequest{
@@ -79,19 +76,14 @@ func TestPauseContainerFail(t *testing.T) {
 		MockID: testSandboxID,
 	}
 
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
-
-	testingImpl.PauseContainerFunc = func(sandboxID, containerID string) error {
+	testingImpl.PauseContainerFunc = func(ctx context.Context, sandboxID, containerID string) error {
 		return nil
 	}
 	defer func() {
 		testingImpl.PauseContainerFunc = nil
 	}()
 
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID:          testContainerID,
 			Annotations: make(map[string]string),
@@ -116,29 +108,26 @@ func TestPauseContainerFail(t *testing.T) {
 	}
 	ctx := namespaces.WithNamespace(context.Background(), "UnitTest")
 
-	_, err = s.Pause(ctx, reqPause)
+	_, err := s.Pause(ctx, reqPause)
 	assert.Error(err)
 }
 
 func TestResumeContainerSuccess(t *testing.T) {
 	assert := assert.New(t)
+	var err error
 
 	sandbox := &vcmock.Sandbox{
 		MockID: testSandboxID,
 	}
 
-	path, err := createTempContainerIDMapping(testContainerID, testSandboxID)
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-
-	testingImpl.ResumeContainerFunc = func(sandboxID, containerID string) error {
+	testingImpl.ResumeContainerFunc = func(ctx context.Context, sandboxID, containerID string) error {
 		return nil
 	}
 	defer func() {
 		testingImpl.ResumeContainerFunc = nil
 	}()
 
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID:          testContainerID,
 			Annotations: make(map[string]string),
@@ -162,7 +151,7 @@ func TestResumeContainerSuccess(t *testing.T) {
 	reqCreate := &taskAPI.CreateTaskRequest{
 		ID: testContainerID,
 	}
-	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid)
+	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid, "", nil)
 	assert.NoError(err)
 
 	reqResume := &taskAPI.ResumeRequest{
@@ -181,18 +170,13 @@ func TestResumeContainerFail(t *testing.T) {
 		MockID: testSandboxID,
 	}
 
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
-
-	testingImpl.ResumeContainerFunc = func(sandboxID, containerID string) error {
+	testingImpl.ResumeContainerFunc = func(ctx context.Context, sandboxID, containerID string) error {
 		return nil
 	}
 	defer func() {
 		testingImpl.ResumeContainerFunc = nil
 	}()
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID:          testContainerID,
 			Annotations: make(map[string]string),
@@ -217,6 +201,6 @@ func TestResumeContainerFail(t *testing.T) {
 	}
 	ctx := namespaces.WithNamespace(context.Background(), "UnitTest")
 
-	_, err = s.Resume(ctx, reqResume)
+	_, err := s.Resume(ctx, reqResume)
 	assert.Error(err)
 }

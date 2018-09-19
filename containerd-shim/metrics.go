@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"github.com/containerd/cgroups"
 	"github.com/containerd/typeurl"
+
 	google_protobuf "github.com/gogo/protobuf/types"
 )
 

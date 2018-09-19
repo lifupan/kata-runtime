@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"context"
@@ -15,9 +15,11 @@ import (
 
 	"github.com/containerd/containerd/namespaces"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
+
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	vcAnnotations "github.com/kata-containers/runtime/virtcontainers/pkg/annotations"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/vcmock"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,21 +35,16 @@ func TestDeleteContainerSuccessAndFail(t *testing.T) {
 	configJSON, err := readOCIConfigJSON(configPath)
 	assert.NoError(err)
 
-	path, err := createTempContainerIDMapping(testContainerID, sandbox.ID())
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-
 	s := &service{
 		id:         testSandboxID,
 		sandbox:    sandbox,
 		containers: make(map[string]*container),
-		processes:  make(map[uint32]string),
 	}
 
 	reqCreate := &taskAPI.CreateTaskRequest{
 		ID: testContainerID,
 	}
-	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid)
+	s.containers[testContainerID], err = newContainer(s, reqCreate, "", nil)
 	assert.NoError(err)
 
 	reqDelete := &taskAPI.DeleteRequest{
@@ -55,7 +52,7 @@ func TestDeleteContainerSuccessAndFail(t *testing.T) {
 	}
 	ctx := namespaces.WithNamespace(context.Background(), "UnitTest")
 
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID: testContainerID,
 			Annotations: map[string]string{
@@ -76,7 +73,7 @@ func TestDeleteContainerSuccessAndFail(t *testing.T) {
 	assert.Error(err)
 	assert.True(vcmock.IsMockError(err))
 
-	testingImpl.StopContainerFunc = func(sandboxID, containerID string) (vc.VCContainer, error) {
+	testingImpl.StopContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.VCContainer, error) {
 		return &vcmock.Container{}, nil
 	}
 	defer func() {
@@ -87,7 +84,7 @@ func TestDeleteContainerSuccessAndFail(t *testing.T) {
 	assert.Error(err)
 	assert.True(vcmock.IsMockError(err))
 
-	testingImpl.DeleteContainerFunc = func(sandboxID, containerID string) (vc.VCContainer, error) {
+	testingImpl.DeleteContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.VCContainer, error) {
 		return &vcmock.Container{}, nil
 	}
 	defer func() {

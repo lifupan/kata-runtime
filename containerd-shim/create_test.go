@@ -4,20 +4,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"context"
-	"github.com/containerd/containerd/namespaces"
-	taskAPI "github.com/containerd/containerd/runtime/v2/task"
-	vc "github.com/kata-containers/runtime/virtcontainers"
-	"github.com/kata-containers/runtime/virtcontainers/pkg/vcmock"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/containerd/containerd/namespaces"
+	taskAPI "github.com/containerd/containerd/runtime/v2/task"
+
+	vc "github.com/kata-containers/runtime/virtcontainers"
+	"github.com/kata-containers/runtime/virtcontainers/pkg/vcmock"
+
+	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateCreateSandboxSuccess(t *testing.T) {
@@ -30,12 +33,7 @@ func TestCreateCreateSandboxSuccess(t *testing.T) {
 		},
 	}
 
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
-
-	testingImpl.CreateSandboxFunc = func(sandboxConfig vc.SandboxConfig) (vc.VCSandbox, error) {
+	testingImpl.CreateSandboxFunc = func(ctx context.Context, sandboxConfig vc.SandboxConfig) (vc.VCSandbox, error) {
 		return sandbox, nil
 	}
 
@@ -97,11 +95,6 @@ func TestCreateCreateSandboxSuccess(t *testing.T) {
 func TestCreateCreateSandboxFail(t *testing.T) {
 	assert := assert.New(t)
 
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
-
 	tmpdir, err := ioutil.TempDir("", "")
 	assert.NoError(err)
 	defer os.RemoveAll(tmpdir)
@@ -144,11 +137,6 @@ func TestCreateCreateSandboxFail(t *testing.T) {
 
 func TestCreateCreateSandboxConfigFail(t *testing.T) {
 	assert := assert.New(t)
-
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
 
 	tmpdir, err := ioutil.TempDir("", "")
 	assert.NoError(err)
@@ -206,12 +194,7 @@ func TestCreateCreateContainerSuccess(t *testing.T) {
 		MockID: testSandboxID,
 	}
 
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
-
-	testingImpl.CreateContainerFunc = func(sandboxID string, containerConfig vc.ContainerConfig) (vc.VCSandbox, vc.VCContainer, error) {
+	testingImpl.CreateContainerFunc = func(ctx context.Context, sandboxID string, containerConfig vc.ContainerConfig) (vc.VCSandbox, vc.VCContainer, error) {
 		return sandbox, &vcmock.Container{}, nil
 	}
 
@@ -268,11 +251,6 @@ func TestCreateCreateContainerSuccess(t *testing.T) {
 func TestCreateCreateContainerFail(t *testing.T) {
 	assert := assert.New(t)
 
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
-
 	tmpdir, err := ioutil.TempDir("", "")
 	assert.NoError(err)
 	defer os.RemoveAll(tmpdir)
@@ -325,12 +303,7 @@ func TestCreateCreateContainerConfigFail(t *testing.T) {
 		MockID: testSandboxID,
 	}
 
-	path, err := ioutil.TempDir("", "containers-mapping")
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-	ctrsMapTreePath = path
-
-	testingImpl.CreateContainerFunc = func(sandboxID string, containerConfig vc.ContainerConfig) (vc.VCSandbox, vc.VCContainer, error) {
+	testingImpl.CreateContainerFunc = func(ctx context.Context, sandboxID string, containerConfig vc.ContainerConfig) (vc.VCSandbox, vc.VCContainer, error) {
 		return sandbox, &vcmock.Container{}, nil
 	}
 

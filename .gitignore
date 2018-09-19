@@ -2,6 +2,7 @@
 *.o
 *.swp
 /kata-runtime
+/containerd-shim-kata-v2
 /data/kata-collect-data.sh
 /cli/coverage.html
 /cli/config-generated.go

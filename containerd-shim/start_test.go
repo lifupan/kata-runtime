@@ -4,33 +4,31 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/containerd/containerd/namespaces"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
+
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	vcAnnotations "github.com/kata-containers/runtime/virtcontainers/pkg/annotations"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/vcmock"
+
 	"github.com/stretchr/testify/assert"
 )
 
 func TestStartStartSandboxSuccess(t *testing.T) {
 	assert := assert.New(t)
+	var err error
 
 	sandbox := &vcmock.Sandbox{
 		MockID: testSandboxID,
 	}
 
-	path, err := createTempContainerIDMapping(sandbox.ID(), sandbox.ID())
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID: sandbox.ID(),
 			Annotations: map[string]string{
@@ -53,14 +51,14 @@ func TestStartStartSandboxSuccess(t *testing.T) {
 	reqCreate := &taskAPI.CreateTaskRequest{
 		ID: testSandboxID,
 	}
-	s.containers[testSandboxID], err = newContainer(s, reqCreate, TestPid)
+	s.containers[testSandboxID], err = newContainer(s, reqCreate, TestPid, vc.PodSandbox, nil)
 	assert.NoError(err)
 
 	reqStart := &taskAPI.StartRequest{
 		ID: testSandboxID,
 	}
 
-	testingImpl.StartSandboxFunc = func(sandboxID string) (vc.VCSandbox, error) {
+	testingImpl.StartSandboxFunc = func(ctx context.Context, sandboxID string) (vc.VCSandbox, error) {
 		return sandbox, nil
 	}
 
@@ -75,16 +73,13 @@ func TestStartStartSandboxSuccess(t *testing.T) {
 
 func TestStartMissingAnnotation(t *testing.T) {
 	assert := assert.New(t)
+	var err error
 
 	sandbox := &vcmock.Sandbox{
 		MockID: testSandboxID,
 	}
 
-	path, err := createTempContainerIDMapping(sandbox.ID(), sandbox.ID())
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID:          sandbox.ID(),
 			Annotations: map[string]string{},
@@ -105,14 +100,14 @@ func TestStartMissingAnnotation(t *testing.T) {
 	reqCreate := &taskAPI.CreateTaskRequest{
 		ID: testSandboxID,
 	}
-	s.containers[testSandboxID], err = newContainer(s, reqCreate, TestPid)
+	s.containers[testSandboxID], err = newContainer(s, reqCreate, TestPid, "", nil)
 	assert.NoError(err)
 
 	reqStart := &taskAPI.StartRequest{
 		ID: testSandboxID,
 	}
 
-	testingImpl.StartSandboxFunc = func(sandboxID string) (vc.VCSandbox, error) {
+	testingImpl.StartSandboxFunc = func(ctx context.Context, sandboxID string) (vc.VCSandbox, error) {
 		return sandbox, nil
 	}
 
@@ -128,6 +123,7 @@ func TestStartMissingAnnotation(t *testing.T) {
 
 func TestStartStartContainerSucess(t *testing.T) {
 	assert := assert.New(t)
+	var err error
 
 	sandbox := &vcmock.Sandbox{
 		MockID: testSandboxID,
@@ -140,11 +136,7 @@ func TestStartStartContainerSucess(t *testing.T) {
 		},
 	}
 
-	path, err := createTempContainerIDMapping(testContainerID, sandbox.ID())
-	assert.NoError(err)
-	defer os.RemoveAll(path)
-
-	testingImpl.StatusContainerFunc = func(sandboxID, containerID string) (vc.ContainerStatus, error) {
+	testingImpl.StatusContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error) {
 		return vc.ContainerStatus{
 			ID: testContainerID,
 			Annotations: map[string]string{
@@ -157,7 +149,7 @@ func TestStartStartContainerSucess(t *testing.T) {
 		testingImpl.StatusContainerFunc = nil
 	}()
 
-	testingImpl.StartContainerFunc = func(sandboxID, containerID string) (vc.VCContainer, error) {
+	testingImpl.StartContainerFunc = func(ctx context.Context, sandboxID, containerID string) (vc.VCContainer, error) {
 		return sandbox.MockContainers[0], nil
 	}
 
@@ -175,7 +167,7 @@ func TestStartStartContainerSucess(t *testing.T) {
 	reqCreate := &taskAPI.CreateTaskRequest{
 		ID: testContainerID,
 	}
-	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid)
+	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid, vc.PodContainer, nil)
 	assert.NoError(err)
 
 	reqStart := &taskAPI.StartRequest{

@@ -3,18 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	googleProtobuf "github.com/gogo/protobuf/types"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"strings"
-	"time"
 )
 
 type exec struct {
@@ -23,14 +24,13 @@ type exec struct {
 	tty       *tty
 	ttyio     *ttyIO
 	id        string
-	pid       uint32
 
 	exitCode int32
 
 	status task.Status
 
 	exitIOch chan struct{}
-	exitch   chan uint32
+	exitCh   chan uint32
 
 	exitTime time.Time
 }
@@ -106,9 +106,9 @@ func newExec(c *container, stdin, stdout, stderr string, terminal bool, jspec *g
 		container: c,
 		cmds:      cmds,
 		tty:       tty,
-		exitCode:  int32(255),
+		exitCode:  exitCode255,
 		exitIOch:  make(chan struct{}),
-		exitch:    make(chan uint32, 1),
+		exitCh:    make(chan uint32, 1),
 		status:    task.StatusCreated,
 	}
 

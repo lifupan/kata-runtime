@@ -3,14 +3,24 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"context"
-	"github.com/containerd/fifo"
 	"io"
 	"sync"
 	"syscall"
+
+	"github.com/containerd/fifo"
+)
+
+var (
+	bufPool = sync.Pool{
+		New: func() interface{} {
+			buffer := make([]byte, 32<<10)
+			return &buffer
+		},
+	}
 )
 
 type ttyIO struct {
@@ -103,7 +113,7 @@ func ioCopy(exitch chan struct{}, tty *ttyIO, stdinPipe io.WriteCloser, stdoutPi
 		go func() {
 			p := bufPool.Get().(*[]byte)
 			defer bufPool.Put(p)
-			_, _ = io.CopyBuffer(tty.Stderr, stderrPipe, *p)
+			io.CopyBuffer(tty.Stderr, stderrPipe, *p)
 			wg.Done()
 		}()
 	}

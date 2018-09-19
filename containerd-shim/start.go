@@ -3,37 +3,46 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"context"
 	"fmt"
+
 	"github.com/containerd/containerd/api/types/task"
-	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+	"github.com/kata-containers/runtime/pkg/katautils"
 )
 
 func startContainer(ctx context.Context, s *service, c *container) error {
 	//start a container
-	// Checks the MUST and MUST NOT from OCI runtime specification
-	status, sandboxID, err := getExistingContainerInfo(c.id)
-	if err != nil {
+	if c.cType == "" {
+		err := fmt.Errorf("Bug, the container %s type is empty", c.id)
 		return err
 	}
 
-	containerType, err := oci.GetContainerType(status.Annotations)
-	if err != nil {
+	if s.sandbox == nil {
+		err := fmt.Errorf("Bug, the sandbox hasn't been created for this container %s", c.id)
 		return err
 	}
-	if containerType.IsSandbox() {
-		_, err := vci.StartSandbox(sandboxID)
+
+	if c.cType.IsSandbox() {
+		_, err := vci.StartSandbox(ctx, s.sandbox.ID())
 		if err != nil {
 			return err
 		}
 	} else {
-		_, err = vci.StartContainer(sandboxID, c.id)
+		_, err := s.sandbox.StartContainer(c.id)
 		if err != nil {
 			return err
 		}
+	}
+
+	// Run post-start OCI hooks.
+	err := katautils.EnterNetNS(s.sandbox.GetNetNs(), func() error {
+		return katautils.PostStartHooks(ctx, *c.spec, s.sandbox.ID(), c.bundle)
+	})
+	if err != nil {
+		return err
 	}
 
 	c.status = task.StatusRunning
@@ -79,9 +88,6 @@ func startExec(ctx context.Context, s *service, containerID, execID string) (*ex
 		return nil, err
 	}
 	execs.id = proc.Token
-	pid := s.pid()
-	execs.pid = pid
-	s.processes[pid] = execID
 
 	execs.status = task.StatusRunning
 	if execs.tty.height != 0 && execs.tty.width != 0 {

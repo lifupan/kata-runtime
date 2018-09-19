@@ -4,15 +4,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"context"
 	"testing"
 
 	"github.com/containerd/containerd/namespaces"
+
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/vcmock"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,7 +37,7 @@ func TestExecNoSpecFail(t *testing.T) {
 	}
 
 	var err error
-	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid)
+	s.containers[testContainerID], err = newContainer(s, reqCreate, TestPid, "", nil)
 	assert.NoError(err)
 
 	reqExec := &taskAPI.ExecProcessRequest{

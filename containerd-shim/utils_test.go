@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
 	"encoding/json"
@@ -26,8 +26,7 @@ const (
 	// specConf is the name of the file holding the containers configuration
 	specConf = "config.json"
 
-	TestID  = "container_test"
-	TestPid = 5
+	TestID = "container_test"
 
 	testDirMode  = os.FileMode(0750)
 	testFileMode = os.FileMode(0640)
@@ -387,21 +386,6 @@ func runCommandFull(args []string, includeStderr bool) (string, error) {
 	trimmed := strings.TrimSpace(string(bytes))
 
 	return trimmed, err
-}
-
-func createTempContainerIDMapping(containerID, sandboxID string) (string, error) {
-	tmpDir, err := ioutil.TempDir("", "containers-mapping")
-	if err != nil {
-		return "", err
-	}
-	ctrsMapTreePath = tmpDir
-
-	path := filepath.Join(ctrsMapTreePath, containerID, sandboxID)
-	if err := os.MkdirAll(path, 0750); err != nil {
-		return "", err
-	}
-
-	return tmpDir, nil
 }
 
 // Read fail that should contain a CompatOCISpec and

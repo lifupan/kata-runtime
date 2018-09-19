@@ -3,30 +3,38 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package kata
+package containerdshim
 
 import (
+	"context"
+	"path"
+
 	"github.com/containerd/containerd/mount"
+	"github.com/kata-containers/runtime/pkg/katautils"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/sirupsen/logrus"
-	"path"
 )
 
-func deleteContainer(s *service, c *container) error {
+func deleteContainer(ctx context.Context, s *service, c *container) error {
 
-	status, err := vci.StatusContainer(s.sandbox.ID(), c.id)
+	status, err := vci.StatusContainer(ctx, s.sandbox.ID(), c.id)
 	if err != nil {
 		return err
 	}
 	if status.State.State != vc.StateStopped {
-		_, err = vci.StopContainer(s.sandbox.ID(), c.id)
+		_, err = vci.StopContainer(ctx, s.sandbox.ID(), c.id)
 		if err != nil {
 			return err
 		}
 	}
 
-	_, err = vci.DeleteContainer(s.sandbox.ID(), c.id)
+	_, err = vci.DeleteContainer(ctx, s.sandbox.ID(), c.id)
 	if err != nil {
+		return err
+	}
+
+	// Run post-stop OCI hooks.
+	if err := katautils.PostStopHooks(ctx, *c.spec, s.sandbox.ID(), c.bundle); err != nil {
 		return err
 	}
 
@@ -35,11 +43,6 @@ func deleteContainer(s *service, c *container) error {
 		logrus.WithError(err).Warn("failed to cleanup rootfs mount")
 	}
 
-	if err := delContainerIDMapping(c.id); err != nil {
-		return err
-	}
-
-	delete(s.processes, c.pid)
 	delete(s.containers, c.id)
 
 	return nil
