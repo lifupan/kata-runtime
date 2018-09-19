@@ -6,9 +6,10 @@
 package kata
 
 import (
+	"time"
+
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/sirupsen/logrus"
-	"time"
 )
 
 func wait(s *service, c *container, execID string) (int32, error) {
@@ -36,13 +37,16 @@ func wait(s *service, c *container, execID string) (int32, error) {
 
 	ret, err := s.sandbox.WaitProcess(c.id, processID)
 	if err != nil {
-		logrus.Errorf("Wait for process cid=%s,processID=%s  failed with err: %v", c.id, processID, err)
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"container": c.id,
+			"pid":       processID,
+		}).Error("Wait for process failed")
 	}
 
 	if execID == "" {
-		c.exitch <- uint32(ret)
+		c.exitCh <- uint32(ret)
 	} else {
-		execs.exitch <- uint32(ret)
+		execs.exitCh <- uint32(ret)
 	}
 
 	timeStamp := time.Now()

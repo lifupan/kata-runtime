@@ -6,16 +6,10 @@
 package main
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/kata-containers/runtime/containerd-shim/kata"
 )
 
 func main() {
-	if err := shim.Run(kata.New); err != nil {
-		fmt.Fprintf(os.Stderr, "containerd-shim-kata-v2: %s\n", err)
-		os.Exit(1)
-	}
+	shim.Run("io.containerd.kata.v2", kata.New)
 }

@@ -389,21 +389,6 @@ func runCommandFull(args []string, includeStderr bool) (string, error) {
 	return trimmed, err
 }
 
-func createTempContainerIDMapping(containerID, sandboxID string) (string, error) {
-	tmpDir, err := ioutil.TempDir("", "containers-mapping")
-	if err != nil {
-		return "", err
-	}
-	ctrsMapTreePath = tmpDir
-
-	path := filepath.Join(ctrsMapTreePath, containerID, sandboxID)
-	if err := os.MkdirAll(path, 0750); err != nil {
-		return "", err
-	}
-
-	return tmpDir, nil
-}
-
 // Read fail that should contain a CompatOCISpec and
 // return its JSON representation on success
 func readOCIConfigJSON(configFile string) (string, error) {

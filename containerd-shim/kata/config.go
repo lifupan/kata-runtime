@@ -14,8 +14,10 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+	"github.com/sirupsen/logrus"
 )
 
 var defaultHypervisorPath = "/usr/bin/qemu-lite-system-x86_64"
@@ -31,6 +33,7 @@ const systemdUnitName = "kata-containers.target"
 const defaultVCPUCount uint32 = 1
 const defaultMaxVCPUCount uint32 = 0
 const defaultMemSize uint32 = 2048 // MiB
+const defaultMemSlots uint32 = 10
 const defaultBridgesCount uint32 = 1
 const defaultInterNetworkingModel = "macvtap"
 const defaultBlockDeviceDriver = "virtio-scsi"
@@ -97,12 +100,13 @@ type hypervisor struct {
 	MachineAccelerators   string `toml:"machine_accelerators"`
 	KernelParams          string `toml:"kernel_params"`
 	MachineType           string `toml:"machine_type"`
-	DefaultVCPUs          int32  `toml:"default_vcpus"`
+	BlockDeviceDriver     string `toml:"block_device_driver"`
+	NumVCPUs              int32  `toml:"default_vcpus"`
 	DefaultMaxVCPUs       uint32 `toml:"default_maxvcpus"`
-	DefaultMemSz          uint32 `toml:"default_memory"`
+	MemorySize            uint32 `toml:"default_memory"`
+	MemSlots              uint32 `toml:"memory_slots"`
 	DefaultBridges        uint32 `toml:"default_bridges"`
 	Msize9p               uint32 `toml:"msize_9p"`
-	BlockDeviceDriver     string `toml:"block_device_driver"`
 	DisableBlockDeviceUse bool   `toml:"disable_block_device_use"`
 	MemPrealloc           bool   `toml:"enable_mem_prealloc"`
 	HugePages             bool   `toml:"enable_hugepages"`
@@ -110,8 +114,10 @@ type hypervisor struct {
 	Debug                 bool   `toml:"enable_debug"`
 	DisableNestingChecks  bool   `toml:"disable_nesting_checks"`
 	EnableIOThreads       bool   `toml:"enable_iothreads"`
+	UseVSock              bool   `toml:"use_vsock"`
+	HotplugVFIOOnRootBus  bool   `toml:"hotplug_vfio_on_root_bus"`
+	DisableVhostNet       bool   `toml:"disable_vhost_net"`
 }
-
 type proxy struct {
 	Path  string `toml:"path"`
 	Debug bool   `toml:"enable_debug"`
@@ -119,6 +125,7 @@ type proxy struct {
 
 type runtime struct {
 	Debug             bool   `toml:"enable_debug"`
+	Tracing           bool   `toml:"enable_tracing"`
 	InterNetworkModel string `toml:"internetworking_model"`
 }
 
@@ -217,14 +224,14 @@ func (h hypervisor) machineType() string {
 func (h hypervisor) defaultVCPUs() uint32 {
 	numCPUs := goruntime.NumCPU()
 
-	if h.DefaultVCPUs < 0 || h.DefaultVCPUs > int32(numCPUs) {
+	if h.NumVCPUs < 0 || h.NumVCPUs > int32(numCPUs) {
 		return uint32(numCPUs)
 	}
-	if h.DefaultVCPUs == 0 { // or unspecified
+	if h.NumVCPUs == 0 { // or unspecified
 		return defaultVCPUCount
 	}
 
-	return uint32(h.DefaultVCPUs)
+	return uint32(h.NumVCPUs)
 }
 
 func (h hypervisor) defaultMaxVCPUs() uint32 {
@@ -247,11 +254,20 @@ func (h hypervisor) defaultMaxVCPUs() uint32 {
 }
 
 func (h hypervisor) defaultMemSz() uint32 {
-	if h.DefaultMemSz < 8 {
+	if h.MemorySize < 8 {
 		return defaultMemSize // MiB
 	}
 
-	return h.DefaultMemSz
+	return h.MemorySize
+}
+
+func (h hypervisor) defaultMemSlots() uint32 {
+	slots := h.MemSlots
+	if slots == 0 {
+		slots = defaultMemSlots
+	}
+
+	return slots
 }
 
 func (h hypervisor) defaultBridges() uint32 {
@@ -284,6 +300,10 @@ func (h hypervisor) msize9p() uint32 {
 	}
 
 	return h.Msize9p
+}
+
+func (h hypervisor) useVSock() bool {
+	return h.UseVSock
 }
 
 func newQemuHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
@@ -326,6 +346,16 @@ func newQemuHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		return vc.HypervisorConfig{}, err
 	}
 
+	useVSock := false
+	if h.useVSock() {
+		if SupportsVsocks() {
+			logrus.Info("vsock supported")
+			useVSock = true
+		} else {
+			logrus.Warn("No vsock support, falling back to legacy serial port")
+		}
+	}
+
 	return vc.HypervisorConfig{
 		HypervisorPath:        hypervisor,
 		KernelPath:            kernel,
@@ -335,9 +365,10 @@ func newQemuHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		MachineAccelerators:   machineAccelerators,
 		KernelParams:          vc.DeserializeParams(strings.Fields(kernelParams)),
 		HypervisorMachineType: machineType,
-		DefaultVCPUs:          h.defaultVCPUs(),
+		NumVCPUs:              h.defaultVCPUs(),
 		DefaultMaxVCPUs:       h.defaultMaxVCPUs(),
-		DefaultMemSz:          h.defaultMemSz(),
+		MemorySize:            h.defaultMemSz(),
+		MemSlots:              h.defaultMemSlots(),
 		DefaultBridges:        h.defaultBridges(),
 		DisableBlockDeviceUse: h.DisableBlockDeviceUse,
 		MemPrealloc:           h.MemPrealloc,
@@ -348,6 +379,9 @@ func newQemuHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		BlockDeviceDriver:     blockDriver,
 		EnableIOThreads:       h.EnableIOThreads,
 		Msize9p:               h.msize9p(),
+		UseVSock:              useVSock,
+		HotplugVFIOOnRootBus:  h.HotplugVFIOOnRootBus,
+		DisableVhostNet:       h.DisableVhostNet,
 	}, nil
 }
 
@@ -369,8 +403,6 @@ func updateRuntimeConfig(configPath string, tomlConf tomlConfig, config *oci.Run
 			if err != nil {
 				return fmt.Errorf("%v: %v", configPath, err)
 			}
-
-			config.VMConfig.Memory = uint(hConfig.DefaultMemSz)
 
 			config.HypervisorConfig = hConfig
 		}
@@ -411,9 +443,9 @@ func loadConfiguration() (config *oci.RuntimeConfig, err error) {
 		FirmwarePath:          defaultFirmwarePath,
 		MachineAccelerators:   defaultMachineAccelerators,
 		HypervisorMachineType: defaultMachineType,
-		DefaultVCPUs:          defaultVCPUCount,
+		NumVCPUs:              defaultVCPUCount,
 		DefaultMaxVCPUs:       defaultMaxVCPUCount,
-		DefaultMemSz:          defaultMemSize,
+		MemorySize:            defaultMemSize,
 		DefaultBridges:        defaultBridgesCount,
 		MemPrealloc:           defaultEnableMemPrealloc,
 		HugePages:             defaultEnableHugePages,

@@ -7,21 +7,32 @@
 package kata
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
-	"context"
+	"github.com/containerd/containerd/mount"
 	cdshim "github.com/containerd/containerd/runtime/v2/shim"
+
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+
+	"github.com/sirupsen/logrus"
 )
 
 const (
 	k8sEmptyDir = "kubernetes.io~empty-dir"
 )
+
+// VSockDevicePath path to vsock device
+var VSockDevicePath = "/dev/vsock"
+
+// VHostVSockDevicePath path to vhost-vsock device
+var VHostVSockDevicePath = "/dev/vhost-vsock"
 
 // IsEphemeralStorage returns true if the given path
 // to the storage belongs to kubernetes ephemeral storage
@@ -109,4 +120,70 @@ func getAddress(ctx context.Context, bundlePath, id string) (string, error) {
 	}
 
 	return "", nil
+}
+
+func cleanupContainer(ctx context.Context, sid, cid, bundlePath string) error {
+	logrus.WithField("Service", "Cleanup").WithField("container", cid).Info("Cleanup container")
+
+	rootfs := filepath.Join(bundlePath, "rootfs")
+	sandbox, err := vci.FetchSandbox(ctx, sid)
+	if err != nil {
+		return err
+	}
+
+	status, err := sandbox.StatusContainer(cid)
+	if err != nil {
+		logrus.WithError(err).WithField("container", cid).Warn("failed to get container status")
+		return err
+	}
+
+	if oci.StateToOCIState(status.State) != oci.StateStopped {
+		err := vci.KillContainer(ctx, sid, cid, syscall.SIGKILL, true)
+		if err != nil {
+			logrus.WithError(err).WithField("container", cid).Warn("failed to kill container")
+			return err
+		}
+	}
+
+	if _, err = vci.StopContainer(ctx, sid, cid); err != nil {
+		logrus.WithError(err).WithField("container", cid).Warn("failed to stop container")
+		return err
+	}
+
+	if _, err := vci.DeleteContainer(ctx, sid, cid); err != nil {
+		logrus.WithError(err).WithField("container", cid).Warn("failed to remove container")
+	}
+
+	if err := mount.UnmountAll(rootfs, 0); err != nil {
+		logrus.WithError(err).WithField("container", cid).Warn("failed to cleanup container rootfs")
+	}
+
+	if len(sandbox.GetAllContainers()) == 0 {
+		_, err = vci.StopSandbox(ctx, sid)
+		if err != nil {
+			logrus.WithError(err).WithField("sandbox", sid).Warn("failed to stop sandbox")
+			return err
+		}
+
+		_, err = vci.DeleteSandbox(ctx, sid)
+		if err != nil {
+			logrus.WithError(err).WithField("sandbox", sid).Warnf("failed to delete sandbox")
+			return err
+		}
+	}
+
+	return nil
+}
+
+// SupportsVsocks returns true if vsocks are supported, otherwise false
+func SupportsVsocks() bool {
+	if _, err := os.Stat(VSockDevicePath); err != nil {
+		return false
+	}
+
+	if _, err := os.Stat(VHostVSockDevicePath); err != nil {
+		return false
+	}
+
+	return true
 }

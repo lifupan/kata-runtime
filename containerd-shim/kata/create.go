@@ -8,22 +8,28 @@
 package kata
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	vf "github.com/kata-containers/runtime/virtcontainers/factory"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+
+	taskAPI "github.com/containerd/containerd/runtime/v2/task"
+
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
-func create(s *service, containerID, bundlePath, netns string, detach bool,
-	runtimeConfig *oci.RuntimeConfig) (vc.VCContainer, error) {
-	var err error
+func create(ctx context.Context, s *service, r *taskAPI.CreateTaskRequest, pid uint32, netns string,
+	runtimeConfig *oci.RuntimeConfig) (*container, error) {
+
+	detach := !r.Terminal
 
 	// Checks the MUST and MUST NOT from OCI runtime specification
-	if bundlePath, err = validCreateParams(containerID, bundlePath); err != nil {
+	bundlePath, err := validCreateParams(r.ID, r.Bundle)
+	if err != nil {
 		return nil, err
 	}
 
@@ -70,7 +76,7 @@ func create(s *service, containerID, bundlePath, netns string, detach bool,
 		}
 	}
 
-	setFactory(runtimeConfig)
+	setFactory(ctx, runtimeConfig)
 
 	disableOutput := noNeedForOutput(detach, ociSpec.Process.Terminal)
 
@@ -81,7 +87,7 @@ func create(s *service, containerID, bundlePath, netns string, detach bool,
 			return nil, fmt.Errorf("cannot create another sandbox in sandbox: %s", s.sandbox.ID())
 		}
 
-		c, err = createSandbox(ociSpec, *runtimeConfig, containerID, bundlePath, disableOutput)
+		c, err = createSandbox(ctx, ociSpec, *runtimeConfig, r.ID, bundlePath, disableOutput)
 		if err != nil {
 			return nil, err
 		}
@@ -92,16 +98,21 @@ func create(s *service, containerID, bundlePath, netns string, detach bool,
 			return nil, fmt.Errorf("BUG: Cannot start the container, since the sandbox hasn't been created")
 		}
 
-		c, err = createContainer(s.sandbox, ociSpec, containerID, bundlePath, disableOutput)
+		err = createContainer(ctx, s.sandbox, ociSpec, r.ID, bundlePath, disableOutput)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return c, nil
+	container, err := newContainer(s, r, pid, containerType, &ociSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	return container, nil
 }
 
-func setFactory(runtimeConfig *oci.RuntimeConfig) {
+func setFactory(ctx context.Context, runtimeConfig *oci.RuntimeConfig) {
 	if runtimeConfig.FactoryConfig.Template {
 		factoryConfig := vf.Config{
 			Template: true,
@@ -113,25 +124,21 @@ func setFactory(runtimeConfig *oci.RuntimeConfig) {
 			},
 		}
 		logrus.WithField("factory", factoryConfig).Info("load vm factory")
-		f, err := vf.NewFactory(factoryConfig, true)
+		f, err := vf.NewFactory(ctx, factoryConfig, true)
 		if err != nil {
 			logrus.WithError(err).Warn("load vm factory failed, about to create new one")
-			f, err = vf.NewFactory(factoryConfig, false)
+			f, err = vf.NewFactory(ctx, factoryConfig, false)
 			if err != nil {
 				logrus.WithError(err).Warn("create vm factory failed")
 			}
 		}
 		if err != nil {
-			vci.SetFactory(f)
+			vci.SetFactory(ctx, f)
 		}
 	}
 }
 
 var systemdKernelParam = []vc.Param{
-	{
-		Key:   "init",
-		Value: "/usr/lib/systemd/systemd",
-	},
 	{
 		Key:   "systemd.unit",
 		Value: systemdUnitName,
@@ -195,7 +202,7 @@ func setKernelParams(containerID string, runtimeConfig *oci.RuntimeConfig) error
 	return nil
 }
 
-func createSandbox(ociSpec oci.CompatOCISpec, runtimeConfig oci.RuntimeConfig,
+func createSandbox(ctx context.Context, ociSpec oci.CompatOCISpec, runtimeConfig oci.RuntimeConfig,
 	containerID, bundlePath string, disableOutput bool) (vc.VCContainer, error) {
 
 	err := setKernelParams(containerID, &runtimeConfig)
@@ -203,14 +210,27 @@ func createSandbox(ociSpec oci.CompatOCISpec, runtimeConfig oci.RuntimeConfig,
 		return nil, err
 	}
 
-	sandboxConfig, err := oci.SandboxConfig(ociSpec, runtimeConfig, bundlePath, containerID, "", disableOutput)
+	sandboxConfig, err := oci.SandboxConfig(ociSpec, runtimeConfig, bundlePath, containerID, "", disableOutput, false)
 	if err != nil {
 		return nil, err
 	}
 
 	sandboxConfig.Stateful = true
 
-	sandbox, err := vci.CreateSandbox(sandboxConfig)
+	//setup the networkNamespace if it hasn't been created, such as the using the CNM
+	if err = setupNetworkNamespace(&sandboxConfig.NetworkConfig); err != nil {
+		return nil, err
+	}
+
+	// Run pre-start OCI hooks.
+	err = enterNetNS(sandboxConfig.NetworkConfig.NetNSPath, func() error {
+		return preStartHooks(ctx, ociSpec, containerID, bundlePath)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sandbox, err := vci.CreateSandbox(ctx, sandboxConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -218,10 +238,6 @@ func createSandbox(ociSpec oci.CompatOCISpec, runtimeConfig oci.RuntimeConfig,
 	containers := sandbox.GetAllContainers()
 	if len(containers) != 1 {
 		return nil, fmt.Errorf("BUG: Container list from sandbox is wrong, expecting only one container, found %d containers", len(containers))
-	}
-
-	if err := addContainerIDMapping(containerID, sandbox.ID()); err != nil {
-		return nil, err
 	}
 
 	return containers[0], nil
@@ -241,24 +257,28 @@ func setEphemeralStorageType(ociSpec oci.CompatOCISpec) oci.CompatOCISpec {
 	return ociSpec
 }
 
-func createContainer(sandbox vc.VCSandbox, ociSpec oci.CompatOCISpec, containerID, bundlePath string,
-	disableOutput bool) (vc.VCContainer, error) {
+func createContainer(ctx context.Context, sandbox vc.VCSandbox, ociSpec oci.CompatOCISpec, containerID, bundlePath string,
+	disableOutput bool) error {
 
 	ociSpec = setEphemeralStorageType(ociSpec)
 
 	contConfig, err := oci.ContainerConfig(ociSpec, bundlePath, containerID, "", disableOutput)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	c, err := sandbox.CreateContainer(contConfig)
+	// Run pre-start OCI hooks.
+	err = enterNetNS(sandbox.GetNetNs(), func() error {
+		return preStartHooks(ctx, ociSpec, containerID, bundlePath)
+	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	if err := addContainerIDMapping(containerID, sandbox.ID()); err != nil {
-		return nil, err
+	_, err = sandbox.CreateContainer(contConfig)
+	if err != nil {
+		return err
 	}
 
-	return c, nil
+	return nil
 }

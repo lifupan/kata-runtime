@@ -10,48 +10,45 @@ import (
 	"encoding/json"
 	"os"
 	sysexec "os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
 	eventstypes "github.com/containerd/containerd/api/events"
+	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/namespaces"
 	cdruntime "github.com/containerd/containerd/runtime"
+	"github.com/containerd/containerd/runtime/v2/runc/options"
 	cdshim "github.com/containerd/containerd/runtime/v2/shim"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
+	"github.com/containerd/typeurl"
+
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
 
-	"github.com/containerd/containerd/api/types/task"
-	"github.com/containerd/containerd/runtime/v2/runc/options"
-	"github.com/containerd/typeurl"
 	ptypes "github.com/gogo/protobuf/types"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
-	"path/filepath"
 )
 
+// Define the service's channel size, which is used for
+// reaping the exited processes exit state and forwarding
+// it to containerd as the containerd event format.
 const bufferSize = 32
 
 var (
-	empty   = &ptypes.Empty{}
-	bufPool = sync.Pool{
-		New: func() interface{} {
-			buffer := make([]byte, 32<<10)
-			return &buffer
-		},
-	}
+	empty                     = &ptypes.Empty{}
+	_     taskAPI.TaskService = (taskAPI.TaskService)(&service{})
 )
 
-var _ taskAPI.TaskService = (taskAPI.TaskService)(&service{})
-
-//The init pid that passed to containerd. This pid is just used to
-//map the unique process in sandbox.
+// The init pid that passed to containerd. This pid is just used to
+// map the unique process in sandbox.
 var pidCount uint32 = 5
 
 // concrete virtcontainer implementation
@@ -79,7 +76,11 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 
 	go s.forward(publisher)
 
-	vci.SetLogger(logrus.WithField("ID", id))
+	logger := logrus.WithField("ID", id)
+	if runtimeConfig.Debug {
+		logger.Logger.Level = logrus.DebugLevel
+	}
+	vci.SetLogger(ctx, logger)
 
 	return s, nil
 }
@@ -113,18 +114,18 @@ func (s *service) pid() uint32 {
 		_, ok := s.processes[pidCount]
 		if !ok {
 			break
-		} else {
-			pidCount++
-			//if it overflows, recount from 5
-			if pidCount < 5 {
-				pidCount = 5
-			}
+		}
+
+		pidCount++
+		//if it overflows, recount from 5
+		if pidCount < 5 {
+			pidCount = 5
 		}
 	}
 	return pidCount
 }
 
-func newCommand(ctx context.Context, containerdBinary, containerdAddress string) (*sysexec.Cmd, error) {
+func newCommand(ctx context.Context, containerdBinary, id, containerdAddress string) (*sysexec.Cmd, error) {
 	ns, err := namespaces.NamespaceRequired(ctx)
 	if err != nil {
 		return nil, err
@@ -141,6 +142,8 @@ func newCommand(ctx context.Context, containerdBinary, containerdAddress string)
 		"-namespace", ns,
 		"-address", containerdAddress,
 		"-publish-binary", containerdBinary,
+		"-id", id,
+		"-debug",
 	}
 	cmd := sysexec.Command(self, args...)
 	cmd.Dir = cwd
@@ -163,10 +166,13 @@ func (s *service) StartShim(ctx context.Context, id, containerdBinary, container
 		return "", err
 	}
 	if address != "" {
+		if err := cdshim.WriteAddress("address", address); err != nil {
+			return "", err
+		}
 		return address, nil
 	}
 
-	cmd, err := newCommand(ctx, containerdBinary, containerdAddress)
+	cmd, err := newCommand(ctx, containerdBinary, id, containerdAddress)
 	if err != nil {
 		return "", err
 	}
@@ -246,21 +252,18 @@ func getTopic(ctx context.Context, e interface{}) string {
 }
 
 func (s *service) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) {
+	//Since the binary cleanup will return the DeleteResponse from stdout to
+	//containerd, thus we must make sure there is no any outputs in stdout except
+	//the returned response, thus here redirect the log to stderr in case there's
+	//any log output to stdout.
+	logrus.SetOutput(os.Stderr)
+
 	if s.id == "" {
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "the container id is empty, please specify the container id")
 	}
 
 	path, err := os.Getwd()
 	if err != nil {
-		return nil, err
-	}
-
-	//get the bundle parent path, thus we can form a specific
-	//container's bundle path by "bundleParentPath/id"
-	bundleParentPath := filepath.Dir(path)
-
-	// Checks the MUST and MUST NOT from OCI runtime specification
-	if path, err = validCreateParams(s.id, path); err != nil {
 		return nil, err
 	}
 
@@ -276,19 +279,17 @@ func (s *service) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) 
 
 	switch containerType {
 	case vc.PodSandbox:
-		err = cleanupSandbox(s.id, bundleParentPath)
+		err = cleanupContainer(ctx, s.id, s.id, path)
 		if err != nil {
 			return nil, err
 		}
-
 	case vc.PodContainer:
 		sandboxID, err := ociSpec.SandboxID()
 		if err != nil {
 			return nil, err
 		}
 
-		err = cleanupContainer(sandboxID, s.id, path)
-
+		err = cleanupContainer(ctx, sandboxID, s.id, path)
 		if err != nil {
 			return nil, err
 		}
@@ -298,63 +299,6 @@ func (s *service) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) 
 		ExitedAt:   time.Now(),
 		ExitStatus: 128 + uint32(unix.SIGKILL),
 	}, nil
-}
-
-func cleanupContainer(sid, cid, bundlePath string) error {
-	status, err := vci.StatusContainer(sid, cid)
-	if err != nil {
-		return err
-	}
-
-	if oci.StateToOCIState(status.State) != oci.StateStopped {
-		if _, err := vci.StopContainer(sid, cid); err != nil {
-			logrus.WithError(err).Warn("failed to stop kata container")
-		}
-	}
-
-	if err := delContainerIDMapping(cid); err != nil {
-		logrus.WithError(err).Warnf("failed to remove kata container %s id mapping files", cid)
-	}
-
-	rootfs := filepath.Join(bundlePath, "rootfs")
-	if err := mount.UnmountAll(rootfs, 0); err != nil {
-		logrus.WithError(err).Warnf("failed to cleanup container %s rootfs mount", cid)
-	}
-
-	return nil
-}
-
-func cleanupSandbox(id, bundleParentPath string) error {
-	sandbox, err := vci.FetchSandbox(id)
-	if err != nil {
-		return err
-	}
-
-	containers := sandbox.GetAllContainers()
-	status := sandbox.Status()
-
-	if oci.StateToOCIState(status.State) != oci.StateStopped {
-		if _, err := vci.StopSandbox(id); err != nil {
-			logrus.WithError(err).Warn("failed to stop kata container")
-		}
-	}
-
-	if _, err := vci.DeleteSandbox(id); err != nil {
-		logrus.WithError(err).Warn("failed to remove kata container")
-	}
-
-	for _, c := range containers {
-		if err := delContainerIDMapping(id); err != nil {
-			logrus.WithError(err).Warnf("failed to remove kata container %s id mapping files", c.ID())
-		}
-
-		rootfs := filepath.Join(bundleParentPath, c.ID(), "rootfs")
-		if err := mount.UnmountAll(rootfs, 0); err != nil {
-			logrus.WithError(err).Warnf("failed to cleanup container %s rootfs mount", c.ID())
-		}
-	}
-
-	return nil
 }
 
 // Create a new sandbox or container with the underlying OCI runtime
@@ -386,16 +330,12 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 		}
 	}
 
-	_, err = create(s, r.ID, r.Bundle, ns, !r.Terminal, s.config)
+	pid := s.pid()
+	container, err := create(ctx, s, r, pid, ns, s.config)
 	if err != nil {
 		return nil, err
 	}
 
-	pid := s.pid()
-	container, err := newContainer(s, r, pid)
-	if err != nil {
-		return nil, err
-	}
 	container.status = task.StatusCreated
 
 	s.containers[r.ID] = container
@@ -449,7 +389,7 @@ func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAP
 	}
 
 	if r.ExecID == "" {
-		err = deleteContainer(s, c)
+		err = deleteContainer(ctx, s, c)
 		if err != nil {
 			return nil, err
 		}
@@ -586,14 +526,18 @@ func (s *service) Pause(ctx context.Context, r *taskAPI.PauseRequest) (*ptypes.E
 
 	c.status = task.StatusPausing
 
-	err = vci.PauseContainer(r.ID, c.id)
+	err = vci.PauseContainer(ctx, s.sandbox.ID(), r.ID)
 	if err == nil {
 		c.status = task.StatusPaused
-	} else {
+		return empty, nil
+	}
+
+	c.status, err = s.getContainerStatus(c.id)
+	if err != nil {
 		c.status = task.StatusUnknown
 	}
 
-	return nil, err
+	return empty, err
 }
 
 // Resume the container
@@ -606,14 +550,18 @@ func (s *service) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes
 		return nil, err
 	}
 
-	err = vci.ResumeContainer(r.ID, c.id)
+	err = vci.ResumeContainer(ctx, s.sandbox.ID(), c.id)
 	if err == nil {
 		c.status = task.StatusRunning
-	} else {
+		return empty, nil
+	}
+
+	c.status, err = s.getContainerStatus(c.id)
+	if err != nil {
 		c.status = task.StatusUnknown
 	}
 
-	return nil, err
+	return empty, err
 }
 
 // Kill a process with the provided signal
@@ -652,18 +600,21 @@ func (s *service) Pids(ctx context.Context, r *taskAPI.PidsRequest) (*taskAPI.Pi
 		pInfo := task.ProcessInfo{
 			Pid: pid,
 		}
-
-		if id != "" {
-			d := &options.ProcessDetails{
-				ExecID: id,
-			}
-			a, err := typeurl.MarshalAny(d)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to marshal process %d info", pid)
-			}
-			pInfo.Info = a
-		}
 		processes = append(processes, &pInfo)
+
+		if id == "" {
+			continue
+		}
+
+		d := &options.ProcessDetails{
+			ExecID: id,
+		}
+		a, err := typeurl.MarshalAny(d)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to marshal process %d info", pid)
+		}
+		pInfo.Info = a
+
 	}
 	return &taskAPI.PidsResponse{
 		Processes: processes,
@@ -689,7 +640,7 @@ func (s *service) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (*ptyp
 		tty = execs.ttyio
 	}
 
-	if tty != nil {
+	if tty != nil && tty.Stdin != nil {
 		if err := tty.Stdin.Close(); err != nil {
 			return nil, errors.Wrap(err, "close stdin")
 		}
@@ -723,24 +674,26 @@ func (s *service) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*task
 
 func (s *service) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
 	s.mu.Lock()
-	if len(s.containers) == 0 {
-		defer os.Exit(0)
-
-		_, err := vci.StopSandbox(s.sandbox.ID())
-		if err != nil {
-			s.mu.Unlock()
-			return empty, err
-		}
-
-		_, err = vci.DeleteSandbox(s.sandbox.ID())
-		if err != nil {
-			s.mu.Unlock()
-			return empty, err
-		}
-	}
 	defer s.mu.Unlock()
 
-	return empty, nil
+	if len(s.containers) != 0 {
+		return empty, nil
+	}
+
+	defer os.Exit(0)
+
+	_, err := vci.StopSandbox(ctx, s.sandbox.ID())
+	if err != nil {
+		logrus.WithField("sandbox", s.sandbox.ID()).Error("failed to stop sandbox")
+		return empty, err
+	}
+
+	_, err = vci.DeleteSandbox(ctx, s.sandbox.ID())
+	if err != nil {
+		logrus.WithField("sandbox", s.sandbox.ID()).Error("failed to delete sandbox")
+	}
+
+	return empty, err
 }
 
 func (s *service) Stats(ctx context.Context, r *taskAPI.StatsRequest) (*taskAPI.StatsResponse, error) {
@@ -794,13 +747,13 @@ func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.Wa
 
 	//wait for container
 	if r.ExecID == "" {
-		ret = <-c.exitch
+		ret = <-c.exitCh
 	} else { //wait for exec
 		execs, err := c.getExec(r.ExecID)
 		if err != nil {
 			return nil, err
 		}
-		ret = <-execs.exitch
+		ret = <-execs.exitCh
 	}
 
 	return &taskAPI.WaitResponse{

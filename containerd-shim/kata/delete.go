@@ -6,37 +6,40 @@
 package kata
 
 import (
+	"context"
+	"path"
+
 	"github.com/containerd/containerd/mount"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/sirupsen/logrus"
-	"path"
 )
 
-func deleteContainer(s *service, c *container) error {
+func deleteContainer(ctx context.Context, s *service, c *container) error {
 
-	status, err := vci.StatusContainer(s.sandbox.ID(), c.id)
+	status, err := vci.StatusContainer(ctx, s.sandbox.ID(), c.id)
 	if err != nil {
 		return err
 	}
 	if status.State.State != vc.StateStopped {
-		_, err = vci.StopContainer(s.sandbox.ID(), c.id)
+		_, err = vci.StopContainer(ctx, s.sandbox.ID(), c.id)
 		if err != nil {
 			return err
 		}
 	}
 
-	_, err = vci.DeleteContainer(s.sandbox.ID(), c.id)
+	_, err = vci.DeleteContainer(ctx, s.sandbox.ID(), c.id)
 	if err != nil {
+		return err
+	}
+
+	// Run post-stop OCI hooks.
+	if err := postStopHooks(ctx, *c.spec, s.sandbox.ID(), c.bundle); err != nil {
 		return err
 	}
 
 	rootfs := path.Join(c.bundle, "rootfs")
 	if err := mount.UnmountAll(rootfs, 0); err != nil {
 		logrus.WithError(err).Warn("failed to cleanup rootfs mount")
-	}
-
-	if err := delContainerIDMapping(c.id); err != nil {
-		return err
 	}
 
 	delete(s.processes, c.pid)

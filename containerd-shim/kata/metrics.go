@@ -8,6 +8,7 @@ package kata
 import (
 	"github.com/containerd/cgroups"
 	"github.com/containerd/typeurl"
+
 	google_protobuf "github.com/gogo/protobuf/types"
 )
 

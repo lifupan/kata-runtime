@@ -6,25 +6,31 @@
 package kata
 
 import (
+	"sync"
+	"time"
+
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
-	"sync"
-	"time"
+
+	vc "github.com/kata-containers/runtime/virtcontainers"
+	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
 )
 
 type container struct {
 	s        *service
 	ttyio    *ttyIO
+	spec     *oci.CompatOCISpec
 	time     time.Time
 	execs    map[string]*exec
 	exitIOch chan struct{}
-	exitch   chan uint32
+	exitCh   chan uint32
 	id       string
 	stdin    string
 	stdout   string
 	stderr   string
 	bundle   string
+	cType    vc.ContainerType
 	mu       sync.Mutex
 	pid      uint32
 	exit     uint32
@@ -32,13 +38,19 @@ type container struct {
 	terminal bool
 }
 
-func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32) (*container, error) {
+func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32, containerType vc.ContainerType, spec *oci.CompatOCISpec) (*container, error) {
 	if r == nil {
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, " CreateTaskRequest points to nil")
 	}
 
+	// in order to avoid deferencing a nil pointer in test
+	if spec == nil {
+		spec = &oci.CompatOCISpec{}
+	}
+
 	c := &container{
 		s:        s,
+		spec:     spec,
 		pid:      pid,
 		id:       r.ID,
 		bundle:   r.Bundle,
@@ -46,10 +58,11 @@ func newContainer(s *service, r *taskAPI.CreateTaskRequest, pid uint32) (*contai
 		stdout:   r.Stdout,
 		stderr:   r.Stderr,
 		terminal: r.Terminal,
+		cType:    containerType,
 		execs:    make(map[string]*exec),
 		status:   task.StatusCreated,
 		exitIOch: make(chan struct{}),
-		exitch:   make(chan uint32, 1),
+		exitCh:   make(chan uint32, 1),
 		time:     time.Now(),
 	}
 	return c, nil
