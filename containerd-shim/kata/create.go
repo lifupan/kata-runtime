@@ -14,10 +14,11 @@ import (
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	vf "github.com/kata-containers/runtime/virtcontainers/factory"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
-func create(s *service, containerID, bundlePath string, detach bool,
+func create(s *service, containerID, bundlePath, netns string, detach bool,
 	runtimeConfig *oci.RuntimeConfig) (vc.VCContainer, error) {
 	var err error
 
@@ -36,6 +37,71 @@ func create(s *service, containerID, bundlePath string, detach bool,
 		return nil, err
 	}
 
+	//In the sandbox, the containers will only
+	//use the mnt space to separate the rootfs,
+	//and to share the other namesapces with host
+	//in the sandbox, thus remove those namespaces
+	//from ocispec except networkNamespace, since
+	//it has been ignored by kata-agent in sandbox.
+
+	for _, ns := range []specs.LinuxNamespaceType{
+		specs.UserNamespace,
+		specs.UTSNamespace,
+		specs.IPCNamespace,
+		specs.PIDNamespace,
+		specs.CgroupNamespace,
+	} {
+		removeNameSpace(&ociSpec, ns)
+	}
+
+	//set the network namespace path
+	//this set will be applied to sandbox's
+	//network config and hasn't nothing to
+	//do with containers in the sandbox since
+	//networkNamesapce hasn't been ignored by
+	//kata-agent in sandbox.
+	for _, n := range ociSpec.Linux.Namespaces {
+		if n.Type != specs.NetworkNamespace {
+			continue
+		}
+
+		if n.Path == "" {
+			n.Path = netns
+		}
+	}
+
+	setFactory(runtimeConfig)
+
+	disableOutput := noNeedForOutput(detach, ociSpec.Process.Terminal)
+
+	var c vc.VCContainer
+	switch containerType {
+	case vc.PodSandbox:
+		if s.sandbox != nil {
+			return nil, fmt.Errorf("cannot create another sandbox in sandbox: %s", s.sandbox.ID())
+		}
+
+		c, err = createSandbox(ociSpec, *runtimeConfig, containerID, bundlePath, disableOutput)
+		if err != nil {
+			return nil, err
+		}
+		s.sandbox = c.Sandbox()
+
+	case vc.PodContainer:
+		if s.sandbox == nil {
+			return nil, fmt.Errorf("BUG: Cannot start the container, since the sandbox hasn't been created")
+		}
+
+		c, err = createContainer(s.sandbox, ociSpec, containerID, bundlePath, disableOutput)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return c, nil
+}
+
+func setFactory(runtimeConfig *oci.RuntimeConfig) {
 	if runtimeConfig.FactoryConfig.Template {
 		factoryConfig := vf.Config{
 			Template: true,
@@ -59,30 +125,6 @@ func create(s *service, containerID, bundlePath string, detach bool,
 			vci.SetFactory(f)
 		}
 	}
-
-	disableOutput := noNeedForOutput(detach, ociSpec.Process.Terminal)
-
-	var c vc.VCContainer
-	switch containerType {
-	case vc.PodSandbox:
-		if s.sandbox != nil {
-			return nil, fmt.Errorf("cannot create another sandbox in sandbox: %s", s.sandbox.ID())
-		}
-
-		c, err = createSandbox(ociSpec, *runtimeConfig, containerID, bundlePath, disableOutput)
-		if err != nil {
-			return nil, err
-		}
-		s.sandbox = c.Sandbox()
-
-	case vc.PodContainer:
-		c, err = createContainer(ociSpec, containerID, bundlePath, disableOutput)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return c, nil
 }
 
 var systemdKernelParam = []vc.Param{
@@ -199,7 +241,7 @@ func setEphemeralStorageType(ociSpec oci.CompatOCISpec) oci.CompatOCISpec {
 	return ociSpec
 }
 
-func createContainer(ociSpec oci.CompatOCISpec, containerID, bundlePath string,
+func createContainer(sandbox vc.VCSandbox, ociSpec oci.CompatOCISpec, containerID, bundlePath string,
 	disableOutput bool) (vc.VCContainer, error) {
 
 	ociSpec = setEphemeralStorageType(ociSpec)
@@ -209,17 +251,12 @@ func createContainer(ociSpec oci.CompatOCISpec, containerID, bundlePath string,
 		return nil, err
 	}
 
-	sandboxID, err := ociSpec.SandboxID()
+	c, err := sandbox.CreateContainer(contConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	_, c, err := vci.CreateContainer(sandboxID, contConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := addContainerIDMapping(containerID, sandboxID); err != nil {
+	if err := addContainerIDMapping(containerID, sandbox.ID()); err != nil {
 		return nil, err
 	}
 

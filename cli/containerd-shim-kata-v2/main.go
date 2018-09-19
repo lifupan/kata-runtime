@@ -1,13 +1,16 @@
-
+// Copyright (c) 2018 HyperHQ Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+//
 
 package main
 
 import (
-"fmt"
-"os"
+	"fmt"
+	"os"
 
-"github.com/kata-containers/runtime/containerd-shim/kata"
-"github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/kata-containers/runtime/containerd-shim/kata"
 )
 
 func main() {
@@ -16,4 +19,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-
