@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
+
 package kata
 
 import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
+	sysexec "os/exec"
 	"sync"
 	"syscall"
 	"time"
@@ -28,11 +29,11 @@ import (
 	"github.com/containerd/containerd/runtime/v2/runc/options"
 	"github.com/containerd/typeurl"
 	ptypes "github.com/gogo/protobuf/types"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 	"path/filepath"
-	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 const bufferSize = 32
@@ -68,10 +69,10 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 		id:         id,
 		context:    ctx,
 		config:     runtimeConfig,
-		containers: make(map[string]*Container),
+		containers: make(map[string]*container),
 		processes:  make(map[uint32]string),
 		events:     make(chan interface{}, 128),
-		ec:         make(chan Exit, bufferSize),
+		ec:         make(chan exit, bufferSize),
 	}
 
 	go s.processExits()
@@ -83,7 +84,7 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 	return s, nil
 }
 
-type Exit struct {
+type exit struct {
 	id        string
 	execid    string
 	pid       int
@@ -97,12 +98,12 @@ type service struct {
 
 	context    context.Context
 	sandbox    vc.VCSandbox
-	containers map[string]*Container
+	containers map[string]*container
 	processes  map[uint32]string
 	config     *oci.RuntimeConfig
 	events     chan interface{}
 
-	ec chan Exit
+	ec chan exit
 	id string
 }
 
@@ -113,7 +114,7 @@ func (s *service) pid() uint32 {
 		if !ok {
 			break
 		} else {
-			pidCount += 1
+			pidCount++
 			//if it overflows, recount from 5
 			if pidCount < 5 {
 				pidCount = 5
@@ -123,7 +124,7 @@ func (s *service) pid() uint32 {
 	return pidCount
 }
 
-func newCommand(ctx context.Context, containerdBinary, containerdAddress string) (*exec.Cmd, error) {
+func newCommand(ctx context.Context, containerdBinary, containerdAddress string) (*sysexec.Cmd, error) {
 	ns, err := namespaces.NamespaceRequired(ctx)
 	if err != nil {
 		return nil, err
@@ -141,7 +142,7 @@ func newCommand(ctx context.Context, containerdBinary, containerdAddress string)
 		"-address", containerdAddress,
 		"-publish-binary", containerdBinary,
 	}
-	cmd := exec.Command(self, args...)
+	cmd := sysexec.Command(self, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "GOMAXPROCS=2")
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -152,14 +153,29 @@ func newCommand(ctx context.Context, containerdBinary, containerdAddress string)
 }
 
 func (s *service) StartShim(ctx context.Context, id, containerdBinary, containerdAddress string) (string, error) {
+	bundlePath, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	address, err := getAddress(ctx, bundlePath, id)
+	if err != nil {
+		return "", err
+	}
+	if address != "" {
+		return address, nil
+	}
+
 	cmd, err := newCommand(ctx, containerdBinary, containerdAddress)
 	if err != nil {
 		return "", err
 	}
-	address, err := cdshim.SocketAddress(ctx, id)
+
+	address, err = cdshim.SocketAddress(ctx, id)
 	if err != nil {
 		return "", err
 	}
+
 	socket, err := cdshim.NewSocket(address)
 	if err != nil {
 		return "", err
@@ -239,27 +255,43 @@ func (s *service) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) 
 		return nil, err
 	}
 
-	status, err := vci.StatusSandbox(s.id)
+	//get the bundle parent path, thus we can form a specific
+	//container's bundle path by "bundleParentPath/id"
+	bundleParentPath := filepath.Dir(path)
+
+	// Checks the MUST and MUST NOT from OCI runtime specification
+	if path, err = validCreateParams(s.id, path); err != nil {
+		return nil, err
+	}
+
+	ociSpec, err := oci.ParseConfigJSON(path)
 	if err != nil {
 		return nil, err
 	}
 
-	if oci.StateToOCIState(status.State) != oci.StateStopped {
-		if _, err := vci.StopSandbox(s.id); err != nil {
-			logrus.WithError(err).Warn("failed to stop kata container")
+	containerType, err := ociSpec.ContainerType()
+	if err != nil {
+		return nil, err
+	}
+
+	switch containerType {
+	case vc.PodSandbox:
+		err = cleanupSandbox(s.id, bundleParentPath)
+		if err != nil {
+			return nil, err
 		}
-	}
 
-	if _, err := vci.DeleteSandbox(s.id); err != nil {
-		logrus.WithError(err).Warn("failed to remove kata container")
-	}
+	case vc.PodContainer:
+		sandboxID, err := ociSpec.SandboxID()
+		if err != nil {
+			return nil, err
+		}
 
-	if err := delContainerIDMapping(s.id); err != nil {
-		logrus.WithError(err).Warn("failed to remove kata container id mapping files")
-	}
+		err = cleanupContainer(sandboxID, s.id, path)
 
-	if err := mount.UnmountAll(filepath.Join(path, "rootfs"), 0); err != nil {
-		logrus.WithError(err).Warn("failed to cleanup rootfs mount")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &taskAPI.DeleteResponse{
@@ -268,10 +300,72 @@ func (s *service) Cleanup(ctx context.Context) (*taskAPI.DeleteResponse, error) 
 	}, nil
 }
 
+func cleanupContainer(sid, cid, bundlePath string) error {
+	status, err := vci.StatusContainer(sid, cid)
+	if err != nil {
+		return err
+	}
+
+	if oci.StateToOCIState(status.State) != oci.StateStopped {
+		if _, err := vci.StopContainer(sid, cid); err != nil {
+			logrus.WithError(err).Warn("failed to stop kata container")
+		}
+	}
+
+	if err := delContainerIDMapping(cid); err != nil {
+		logrus.WithError(err).Warnf("failed to remove kata container %s id mapping files", cid)
+	}
+
+	rootfs := filepath.Join(bundlePath, "rootfs")
+	if err := mount.UnmountAll(rootfs, 0); err != nil {
+		logrus.WithError(err).Warnf("failed to cleanup container %s rootfs mount", cid)
+	}
+
+	return nil
+}
+
+func cleanupSandbox(id, bundleParentPath string) error {
+	sandbox, err := vci.FetchSandbox(id)
+	if err != nil {
+		return err
+	}
+
+	containers := sandbox.GetAllContainers()
+	status := sandbox.Status()
+
+	if oci.StateToOCIState(status.State) != oci.StateStopped {
+		if _, err := vci.StopSandbox(id); err != nil {
+			logrus.WithError(err).Warn("failed to stop kata container")
+		}
+	}
+
+	if _, err := vci.DeleteSandbox(id); err != nil {
+		logrus.WithError(err).Warn("failed to remove kata container")
+	}
+
+	for _, c := range containers {
+		if err := delContainerIDMapping(id); err != nil {
+			logrus.WithError(err).Warnf("failed to remove kata container %s id mapping files", c.ID())
+		}
+
+		rootfs := filepath.Join(bundleParentPath, c.ID(), "rootfs")
+		if err := mount.UnmountAll(rootfs, 0); err != nil {
+			logrus.WithError(err).Warnf("failed to cleanup container %s rootfs mount", c.ID())
+		}
+	}
+
+	return nil
+}
+
 // Create a new sandbox or container with the underlying OCI runtime
 func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	ns, err := namespaces.NamespaceRequired(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "create namespace")
+	}
 
 	rootfs := filepath.Join(r.Bundle, "rootfs")
 	defer func() {
@@ -292,13 +386,16 @@ func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *
 		}
 	}
 
-	c, err := create(s, r.ID, r.Bundle, !r.Terminal, s.config)
+	_, err = create(s, r.ID, r.Bundle, ns, !r.Terminal, s.config)
 	if err != nil {
 		return nil, err
 	}
 
 	pid := s.pid()
-	container := newContainer(s, r, pid, c)
+	container, err := newContainer(s, r, pid)
+	if err != nil {
+		return nil, err
+	}
 	container.status = task.StatusCreated
 
 	s.containers[r.ID] = container
@@ -329,16 +426,16 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 		return &taskAPI.StartResponse{
 			Pid: c.pid,
 		}, nil
-	} else { //start an exec
-		execs, err := startExec(ctx, s, r.ID, r.ExecID)
-		if err != nil {
-			return nil, errdefs.ToGRPC(err)
-		}
-
-		return &taskAPI.StartResponse{
-			Pid: execs.pid,
-		}, nil
 	}
+	//start an exec
+	execs, err := startExec(ctx, s, r.ID, r.ExecID)
+	if err != nil {
+		return nil, errdefs.ToGRPC(err)
+	}
+
+	return &taskAPI.StartResponse{
+		Pid: execs.pid,
+	}, nil
 }
 
 // Delete the initial process and container
@@ -362,21 +459,21 @@ func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAP
 			ExitedAt:   c.time,
 			Pid:        c.pid,
 		}, nil
-	} else {
-		execs, err := c.getExec(r.ExecID)
-		if err != nil {
-			return nil, err
-		}
-
-		delete(s.processes, execs.pid)
-		delete(c.execs, r.ExecID)
-
-		return &taskAPI.DeleteResponse{
-			ExitStatus: uint32(execs.exitCode),
-			ExitedAt:   execs.exitTime,
-			Pid:        execs.pid,
-		}, nil
 	}
+	//deal with the exec case
+	execs, err := c.getExec(r.ExecID)
+	if err != nil {
+		return nil, err
+	}
+
+	delete(s.processes, execs.pid)
+	delete(c.execs, r.ExecID)
+
+	return &taskAPI.DeleteResponse{
+		ExitStatus: uint32(execs.exitCode),
+		ExitedAt:   execs.exitTime,
+		Pid:        execs.pid,
+	}, nil
 }
 
 // Exec an additional process inside the container
@@ -455,23 +552,26 @@ func (s *service) State(ctx context.Context, r *taskAPI.StateRequest) (*taskAPI.
 			Terminal:   c.terminal,
 			ExitStatus: c.exit,
 		}, nil
-	} else {
-		execs, err := c.getExec(r.ExecID)
-		if err != nil {
-			return nil, err
-		}
-		return &taskAPI.StateResponse{
-			ID:         execs.id,
-			Bundle:     c.bundle,
-			Pid:        execs.pid,
-			Status:     execs.status,
-			Stdin:      execs.tty.stdin,
-			Stdout:     execs.tty.stdout,
-			Stderr:     execs.tty.stderr,
-			Terminal:   execs.tty.terminal,
-			ExitStatus: uint32(execs.exitCode),
-		}, nil
 	}
+
+	//deal with exec case
+	execs, err := c.getExec(r.ExecID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &taskAPI.StateResponse{
+		ID:         execs.id,
+		Bundle:     c.bundle,
+		Pid:        execs.pid,
+		Status:     execs.status,
+		Stdin:      execs.tty.stdin,
+		Stdout:     execs.tty.stdout,
+		Stderr:     execs.tty.stderr,
+		Terminal:   execs.tty.terminal,
+		ExitStatus: uint32(execs.exitCode),
+	}, nil
+
 }
 
 // Pause the container
@@ -716,7 +816,7 @@ func (s *service) processExits() {
 	}
 }
 
-func (s *service) checkProcesses(e Exit) {
+func (s *service) checkProcesses(e exit) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -734,7 +834,7 @@ func (s *service) checkProcesses(e Exit) {
 	return
 }
 
-func (s *service) getContainer(id string) (*Container, error) {
+func (s *service) getContainer(id string) (*container, error) {
 	c := s.containers[id]
 
 	if c == nil {
