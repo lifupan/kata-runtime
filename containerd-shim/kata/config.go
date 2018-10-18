@@ -37,6 +37,7 @@ const defaultMemSlots uint32 = 10
 const defaultBridgesCount uint32 = 1
 const defaultInterNetworkingModel = "macvtap"
 const defaultBlockDeviceDriver = "virtio-scsi"
+const defaultEntropySource = "/dev/urandom"
 const defaultEnableIOThreads bool = false
 const defaultEnableMemPrealloc bool = false
 const defaultEnableHugePages bool = false
@@ -101,6 +102,7 @@ type hypervisor struct {
 	KernelParams          string `toml:"kernel_params"`
 	MachineType           string `toml:"machine_type"`
 	BlockDeviceDriver     string `toml:"block_device_driver"`
+	EntropySource         string `toml:"entropy_source"`
 	NumVCPUs              int32  `toml:"default_vcpus"`
 	DefaultMaxVCPUs       uint32 `toml:"default_maxvcpus"`
 	MemorySize            uint32 `toml:"default_memory"`
@@ -219,6 +221,14 @@ func (h hypervisor) machineType() string {
 	}
 
 	return h.MachineType
+}
+
+func (h hypervisor) GetEntropySource() string {
+	if h.EntropySource == "" {
+		return defaultEntropySource
+	}
+
+	return h.EntropySource
 }
 
 func (h hypervisor) defaultVCPUs() uint32 {
@@ -369,6 +379,7 @@ func newQemuHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		DefaultMaxVCPUs:       h.defaultMaxVCPUs(),
 		MemorySize:            h.defaultMemSz(),
 		MemSlots:              h.defaultMemSlots(),
+		EntropySource:         h.GetEntropySource(),
 		DefaultBridges:        h.defaultBridges(),
 		DisableBlockDeviceUse: h.DisableBlockDeviceUse,
 		MemPrealloc:           h.MemPrealloc,
