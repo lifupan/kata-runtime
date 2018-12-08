@@ -712,21 +712,6 @@ func (h *hyper) processListOneContainer(sandboxID, cID string, options ProcessLi
 	return msg, nil
 }
 
-func (h *hyper) getClient() interface{} {
-	return h.client
-}
-
-func (h *hyper) setClient(client interface{}) error {
-	c, ok := client.(*proxyClient.Client)
-	if !ok {
-		return fmt.Errorf("BUG: got a wrong type agent client")
-	}
-
-	h.client = c
-
-	return nil
-}
-
 // connectProxyRetry repeatedly tries to connect to the proxy on the specified
 // address until a timeout state is reached, when it will fail.
 func (h *hyper) connectProxyRetry(scheme, address string) (conn net.Conn, err error) {

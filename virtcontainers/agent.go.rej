@@ -1,0 +1,15 @@
+--- virtcontainers/agent.go
++++ virtcontainers/agent.go
+@@ -149,6 +149,12 @@ type agent interface {
+        // set to use an existing proxy
+        setProxy(sandbox *Sandbox, proxy proxy, pid int, url string) error
+ 
++       // get the agent's client
++       getClient() interface{}
++
++       // set to use an existing agent's client
++       setClient(client interface{}) error
++
+        // get agent url
+        getAgentURL() (string, error)
+ 

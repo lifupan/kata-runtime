@@ -152,12 +152,6 @@ type agent interface {
 	// get agent url
 	getAgentURL() (string, error)
 
-	// get the agent's client
-	getClient() interface{}
-
-	// set to use an existing agent's client
-	setClient(client interface{}) error
-
 	// createSandbox will tell the agent to perform necessary setup for a Sandbox.
 	createSandbox(sandbox *Sandbox) error
 

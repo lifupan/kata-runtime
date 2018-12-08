@@ -189,6 +189,16 @@ func (n *noopAgent) getAgentURL() (string, error) {
 	return "", nil
 }
 
+// get the agent's client
+func (n *noopAgent) getClient() interface{} {
+	return nil
+}
+
+// set to use an existing agent's client
+func (n *noopAgent) setClient(client interface{}) error {
+	return nil
+}
+
 // setProxy is the Noop agent proxy setter. It does nothing.
 func (n *noopAgent) setProxy(sandbox *Sandbox, proxy proxy, pid int, url string) error {
 	return nil
