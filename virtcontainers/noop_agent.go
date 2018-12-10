@@ -7,7 +7,7 @@ package virtcontainers
 
 import (
 	"syscall"
-
+	
 	"github.com/kata-containers/agent/protocols/grpc"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/types"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -181,6 +181,11 @@ func (n *noopAgent) getSharePath(id string) string {
 
 // reseedRNG is the Noop agent RND reseeder. It does nothing.
 func (n *noopAgent) reseedRNG(data []byte) error {
+	return nil
+}
+
+// reuseAgent is the Noop agent reuser. It does nothing.
+func (n *noopAgent) reuseAgent(agent agent) error {
 	return nil
 }
 
