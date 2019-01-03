@@ -146,22 +146,30 @@ other options are ignored.
 		setExternalLoggers(ctx, kataLog)
 		span.SetTag("container", containerID)
 
-		status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+		status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 		if err != nil {
 			return err
 		}
+
+		defer sandbox.Release()
+
+		lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+		if err != nil {
+			return err
+		}
+		defer vc.UnlockSandbox(ctx, lockFile)
 
 		containerID = status.ID
 
 		kataLog = kataLog.WithFields(logrus.Fields{
 			"container": containerID,
-			"sandbox":   sandboxID,
+			"sandbox":   sandbox.ID(),
 		})
 
 		setExternalLoggers(ctx, kataLog)
 
 		span.SetTag("container", containerID)
-		span.SetTag("sandbox", sandboxID)
+		span.SetTag("sandbox", sandbox.ID())
 
 		// container MUST be running
 		if status.State.State != vc.StateRunning {
@@ -282,6 +290,6 @@ other options are ignored.
 			r.Pids.Limit = int64(context.Int("pids-limit"))
 		}
 
-		return vci.UpdateContainer(ctx, sandboxID, containerID, r)
+		return sandbox.UpdateContainer(containerID, r)
 	},
 }

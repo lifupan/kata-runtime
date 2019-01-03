@@ -10,6 +10,7 @@ import (
 	"context"
 
 	"github.com/kata-containers/runtime/pkg/katautils"
+	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
@@ -67,26 +68,34 @@ func toggleContainerPause(ctx context.Context, containerID string, pause bool) (
 	span.SetTag("container", containerID)
 
 	// Checks the MUST and MUST NOT from OCI runtime specification
-	status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+	status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 	if err != nil {
 		return err
 	}
+
+	defer sandbox.Release()
+
+	lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+	if err != nil {
+		return err
+	}
+	defer vc.UnlockSandbox(ctx, lockFile)
 
 	containerID = status.ID
 
 	kataLog = kataLog.WithFields(logrus.Fields{
 		"container": containerID,
-		"sandbox":   sandboxID,
+		"sandbox":   sandbox.ID(),
 	})
 
 	setExternalLoggers(ctx, kataLog)
 	span.SetTag("container", containerID)
-	span.SetTag("sandbox", sandboxID)
+	span.SetTag("sandbox", sandbox.ID())
 
 	if pause {
-		err = vci.PauseContainer(ctx, sandboxID, containerID)
+		err = sandbox.PauseContainer(containerID)
 	} else {
-		err = vci.ResumeContainer(ctx, sandboxID, containerID)
+		err = sandbox.ResumeContainer(containerID)
 	}
 
 	return err

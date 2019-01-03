@@ -117,16 +117,24 @@ var listRoutesCommand = cli.Command{
 }
 
 func networkModifyCommand(ctx context.Context, containerID, input string, opType networkType, add bool) (err error) {
-	status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+	status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 	if err != nil {
 		return err
 	}
+
+	defer sandbox.Release()
+
+	lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+	if err != nil {
+		return err
+	}
+	defer vc.UnlockSandbox(ctx, lockFile)
 
 	containerID = status.ID
 
 	kataLog = kataLog.WithFields(logrus.Fields{
 		"container": containerID,
-		"sandbox":   sandboxID,
+		"sandbox":   sandbox.ID(),
 	})
 
 	setExternalLoggers(ctx, kataLog)
@@ -157,13 +165,13 @@ func networkModifyCommand(ctx context.Context, containerID, input string, opType
 			return err
 		}
 		if add {
-			resultingInf, err = vci.AddInterface(ctx, sandboxID, inf)
+			resultingInf, err = sandbox.AddInterface(inf)
 			if err != nil {
 				kataLog.WithField("resulting-interface", fmt.Sprintf("%+v", resultingInf)).
 					WithError(err).Error("add interface failed")
 			}
 		} else {
-			resultingInf, err = vci.RemoveInterface(ctx, sandboxID, inf)
+			resultingInf, err = sandbox.RemoveInterface(inf)
 			if err != nil {
 				kataLog.WithField("resulting-interface", fmt.Sprintf("%+v", resultingInf)).
 					WithError(err).Error("delete interface failed")
@@ -175,7 +183,7 @@ func networkModifyCommand(ctx context.Context, containerID, input string, opType
 		if err = json.NewDecoder(f).Decode(&routes); err != nil {
 			return err
 		}
-		resultingRoutes, err = vci.UpdateRoutes(ctx, sandboxID, routes)
+		resultingRoutes, err = sandbox.UpdateRoutes(routes)
 		json.NewEncoder(output).Encode(resultingRoutes)
 		if err != nil {
 			kataLog.WithField("resulting-routes", fmt.Sprintf("%+v", resultingRoutes)).
@@ -186,16 +194,24 @@ func networkModifyCommand(ctx context.Context, containerID, input string, opType
 }
 
 func networkListCommand(ctx context.Context, containerID string, opType networkType) (err error) {
-	status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+	status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 	if err != nil {
 		return err
 	}
+
+	defer sandbox.Release()
+
+	lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+	if err != nil {
+		return err
+	}
+	defer vc.UnlockSandbox(ctx, lockFile)
 
 	containerID = status.ID
 
 	kataLog = kataLog.WithFields(logrus.Fields{
 		"container": containerID,
-		"sandbox":   sandboxID,
+		"sandbox":   sandbox.ID(),
 	})
 
 	setExternalLoggers(ctx, kataLog)
@@ -210,7 +226,7 @@ func networkListCommand(ctx context.Context, containerID string, opType networkT
 	switch opType {
 	case interfaceType:
 		var interfaces []*types.Interface
-		interfaces, err = vci.ListInterfaces(ctx, sandboxID)
+		interfaces, err = sandbox.ListInterfaces()
 		if err != nil {
 			kataLog.WithField("existing-interfaces", fmt.Sprintf("%+v", interfaces)).
 				WithError(err).Error("list interfaces failed")
@@ -218,7 +234,7 @@ func networkListCommand(ctx context.Context, containerID string, opType networkT
 		json.NewEncoder(file).Encode(interfaces)
 	case routeType:
 		var routes []*types.Route
-		routes, err = vci.ListRoutes(ctx, sandboxID)
+		routes, err = sandbox.ListRoutes()
 		if err != nil {
 			kataLog.WithField("resulting-routes", fmt.Sprintf("%+v", routes)).
 				WithError(err).Error("update routes failed")

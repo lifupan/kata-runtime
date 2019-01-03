@@ -159,7 +159,7 @@ information is displayed once every 5 seconds.`,
 			return fmt.Errorf("duration interval must be greater than 0")
 		}
 
-		status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+		status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 		if err != nil {
 			return err
 		}
@@ -168,12 +168,12 @@ information is displayed once every 5 seconds.`,
 
 		kataLog = kataLog.WithFields(logrus.Fields{
 			"container": containerID,
-			"sandbox":   sandboxID,
+			"sandbox":   sandbox.ID(),
 		})
 
 		setExternalLoggers(ctx, kataLog)
 		span.SetTag("container", containerID)
-		span.SetTag("sandbox", sandboxID)
+		span.SetTag("sandbox", sandbox.ID())
 
 		if status.State.State == vc.StateStopped {
 			return fmt.Errorf("container with id %s is not running", status.ID)
@@ -196,7 +196,7 @@ information is displayed once every 5 seconds.`,
 		}()
 
 		if context.Bool("stats") {
-			s, err := vci.StatsContainer(ctx, sandboxID, containerID)
+			s, err := sandbox.StatsContainer(containerID)
 			if err != nil {
 				return err
 			}
@@ -208,7 +208,7 @@ information is displayed once every 5 seconds.`,
 
 		go func() {
 			for range time.Tick(context.Duration("interval")) {
-				s, err := vci.StatsContainer(ctx, sandboxID, containerID)
+				s, err := sandbox.StatsContainer(containerID)
 				if err != nil {
 					logrus.Error(err)
 					continue

@@ -57,21 +57,29 @@ func start(ctx context.Context, containerID string) (vc.VCSandbox, error) {
 	span.SetTag("container", containerID)
 
 	// Checks the MUST and MUST NOT from OCI runtime specification
-	status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+	status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 	if err != nil {
 		return nil, err
 	}
+
+	defer sandbox.Release()
+
+	lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+	if err != nil {
+		return nil, err
+	}
+	defer vc.UnlockSandbox(ctx, lockFile)
 
 	containerID = status.ID
 
 	kataLog = kataLog.WithFields(logrus.Fields{
 		"container": containerID,
-		"sandbox":   sandboxID,
+		"sandbox":   sandbox.ID(),
 	})
 
 	setExternalLoggers(ctx, kataLog)
 	span.SetTag("container", containerID)
-	span.SetTag("sandbox", sandboxID)
+	span.SetTag("sandbox", sandbox.ID())
 
 	containerType, err := oci.GetContainerType(status.Annotations)
 	if err != nil {
@@ -83,27 +91,21 @@ func start(ctx context.Context, containerID string) (vc.VCSandbox, error) {
 		return nil, err
 	}
 
-	var sandbox vc.VCSandbox
-
 	if containerType.IsSandbox() {
-		s, err := vci.StartSandbox(ctx, sandboxID)
+		err := sandbox.Start()
 		if err != nil {
 			return nil, err
 		}
-
-		sandbox = s
 	} else {
-		c, err := vci.StartContainer(ctx, sandboxID, containerID)
+		_, err := sandbox.StartContainer(containerID)
 		if err != nil {
 			return nil, err
 		}
-
-		sandbox = c.Sandbox()
 	}
 
 	// Run post-start OCI hooks.
 	err = katautils.EnterNetNS(sandbox.GetNetNs(), func() error {
-		return katautils.PostStartHooks(ctx, ociSpec, sandboxID, status.Annotations[vcAnnot.BundlePathKey])
+		return katautils.PostStartHooks(ctx, ociSpec, sandbox.ID(), status.Annotations[vcAnnot.BundlePathKey])
 	})
 	if err != nil {
 		return nil, err

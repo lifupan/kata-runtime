@@ -64,9 +64,9 @@ func TestGetContainerInfo(t *testing.T) {
 		testingImpl.StatusContainerFunc = nil
 	}()
 
-	status, sandboxID, err := getContainerInfo(context.Background(), testContainerID)
+	status, s, err := getContainerInfo(context.Background(), testContainerID)
 	assert.NoError(err)
-	assert.Equal(sandboxID, sandbox.ID())
+	assert.Equal(s.ID(), sandbox.ID())
 	assert.Equal(status, containerStatus)
 }
 

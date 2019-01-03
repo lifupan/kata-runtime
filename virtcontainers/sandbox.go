@@ -403,60 +403,7 @@ func (sandboxConfig *SandboxConfig) valid() bool {
 const (
 	// R/W lock
 	exclusiveLock = syscall.LOCK_EX
-
-	// Read only lock
-	sharedLock = syscall.LOCK_SH
 )
-
-// rLockSandbox locks the sandbox with a shared lock.
-func rLockSandbox(sandboxID string) (*os.File, error) {
-	return lockSandbox(sandboxID, sharedLock)
-}
-
-// rwLockSandbox locks the sandbox with an exclusive lock.
-func rwLockSandbox(sandboxID string) (*os.File, error) {
-	return lockSandbox(sandboxID, exclusiveLock)
-}
-
-// lock locks any sandbox to prevent it from being accessed by other processes.
-func lockSandbox(sandboxID string, lockType int) (*os.File, error) {
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	fs := filesystem{}
-	sandboxlockFile, _, err := fs.sandboxURI(sandboxID, lockFileType)
-	if err != nil {
-		return nil, err
-	}
-
-	lockFile, err := os.Open(sandboxlockFile)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := syscall.Flock(int(lockFile.Fd()), lockType); err != nil {
-		return nil, err
-	}
-
-	return lockFile, nil
-}
-
-// unlock unlocks any sandbox to allow it being accessed by other processes.
-func unlockSandbox(lockFile *os.File) error {
-	if lockFile == nil {
-		return fmt.Errorf("lockFile cannot be empty")
-	}
-
-	err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
-	if err != nil {
-		return err
-	}
-
-	lockFile.Close()
-
-	return nil
-}
 
 // Sandbox is composed of a set of containers and a runtime environment.
 // A Sandbox can be created, deleted, started, paused, stopped, listed, entered, and restored.
@@ -584,14 +531,6 @@ func (s *Sandbox) Release() error {
 	}
 	s.hypervisor.disconnect()
 	return s.agent.disconnect()
-}
-
-func (s *Sandbox) releaseStatelessSandbox() error {
-	if s.stateful {
-		return nil
-	}
-
-	return s.Release()
 }
 
 // Status gets the status of the sandbox
@@ -1743,42 +1682,6 @@ func (s *Sandbox) deleteContainersState() error {
 	}
 
 	return nil
-}
-
-// togglePauseSandbox pauses a sandbox if pause is set to true, else it resumes
-// it.
-func togglePauseSandbox(ctx context.Context, sandboxID string, pause bool) (*Sandbox, error) {
-	span, ctx := trace(ctx, "togglePauseSandbox")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandbox
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	// Fetch the sandbox from storage and create it.
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	if pause {
-		err = s.Pause()
-	} else {
-		err = s.Resume()
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	return s, nil
 }
 
 // HotplugAddDevice is used for add a device to sandbox

@@ -15,6 +15,7 @@ import (
 	"github.com/kata-containers/runtime/virtcontainers/pkg/types"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
+	"os"
 )
 
 // VC is the Virtcontainers interface
@@ -23,36 +24,11 @@ type VC interface {
 	SetFactory(ctx context.Context, factory Factory)
 
 	CreateSandbox(ctx context.Context, sandboxConfig SandboxConfig) (VCSandbox, error)
-	DeleteSandbox(ctx context.Context, sandboxID string) (VCSandbox, error)
 	FetchSandbox(ctx context.Context, sandboxID string) (VCSandbox, error)
 	ListSandbox(ctx context.Context) ([]SandboxStatus, error)
-	PauseSandbox(ctx context.Context, sandboxID string) (VCSandbox, error)
-	ResumeSandbox(ctx context.Context, sandboxID string) (VCSandbox, error)
-	RunSandbox(ctx context.Context, sandboxConfig SandboxConfig) (VCSandbox, error)
-	StartSandbox(ctx context.Context, sandboxID string) (VCSandbox, error)
-	StatusSandbox(ctx context.Context, sandboxID string) (SandboxStatus, error)
-	StopSandbox(ctx context.Context, sandboxID string) (VCSandbox, error)
 
-	CreateContainer(ctx context.Context, sandboxID string, containerConfig ContainerConfig) (VCSandbox, VCContainer, error)
-	DeleteContainer(ctx context.Context, sandboxID, containerID string) (VCContainer, error)
-	EnterContainer(ctx context.Context, sandboxID, containerID string, cmd Cmd) (VCSandbox, VCContainer, *Process, error)
-	KillContainer(ctx context.Context, sandboxID, containerID string, signal syscall.Signal, all bool) error
-	StartContainer(ctx context.Context, sandboxID, containerID string) (VCContainer, error)
-	StatusContainer(ctx context.Context, sandboxID, containerID string) (ContainerStatus, error)
-	StatsContainer(ctx context.Context, sandboxID, containerID string) (ContainerStats, error)
-	StopContainer(ctx context.Context, sandboxID, containerID string) (VCContainer, error)
-	ProcessListContainer(ctx context.Context, sandboxID, containerID string, options ProcessListOptions) (ProcessList, error)
-	UpdateContainer(ctx context.Context, sandboxID, containerID string, resources specs.LinuxResources) error
-	PauseContainer(ctx context.Context, sandboxID, containerID string) error
-	ResumeContainer(ctx context.Context, sandboxID, containerID string) error
-
-	AddDevice(ctx context.Context, sandboxID string, info config.DeviceInfo) (api.Device, error)
-
-	AddInterface(ctx context.Context, sandboxID string, inf *types.Interface) (*types.Interface, error)
-	RemoveInterface(ctx context.Context, sandboxID string, inf *types.Interface) (*types.Interface, error)
-	ListInterfaces(ctx context.Context, sandboxID string) ([]*types.Interface, error)
-	UpdateRoutes(ctx context.Context, sandboxID string, routes []*types.Route) ([]*types.Route, error)
-	ListRoutes(ctx context.Context, sandboxID string) ([]*types.Route, error)
+	LockSandbox(ctx context.Context, sandboxID string) (*os.File, error)
+	UnlockSandbox(ctx context.Context, lockFile *os.File) error
 }
 
 // VCSandbox is the Sandbox interface

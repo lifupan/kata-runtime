@@ -11,10 +11,8 @@ import (
 	"runtime"
 	"syscall"
 
+	"fmt"
 	deviceApi "github.com/kata-containers/runtime/virtcontainers/device/api"
-	deviceConfig "github.com/kata-containers/runtime/virtcontainers/device/config"
-	"github.com/kata-containers/runtime/virtcontainers/pkg/types"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
 )
@@ -56,7 +54,7 @@ func CreateSandbox(ctx context.Context, sandboxConfig SandboxConfig, factory Fac
 
 	s, err := createSandboxFromConfig(ctx, sandboxConfig, factory)
 	if err == nil {
-		s.releaseStatelessSandbox()
+		s.Release()
 	}
 
 	return s, err
@@ -141,37 +139,6 @@ func createSandboxFromConfig(ctx context.Context, sandboxConfig SandboxConfig, f
 	return s, nil
 }
 
-// DeleteSandbox is the virtcontainers sandbox deletion entry point.
-// DeleteSandbox will stop an already running container and then delete it.
-func DeleteSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
-	span, ctx := trace(ctx, "DeleteSandbox")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	// Fetch the sandbox from storage and create it.
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	// Delete it.
-	if err := s.Delete(); err != nil {
-		return nil, err
-	}
-
-	return s, nil
-}
-
 // FetchSandbox is the virtcontainers sandbox fetching entry point.
 // FetchSandbox will find out and connect to an existing sandbox and
 // return the sandbox structure. The caller is responsible of calling
@@ -184,11 +151,11 @@ func FetchSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
 		return nil, errNeedSandboxID
 	}
 
-	lockFile, err := rwLockSandbox(sandboxID)
+	lockFile, err := LockSandbox(ctx, sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	defer unlockSandbox(lockFile)
+	defer UnlockSandbox(ctx, lockFile)
 
 	// Fetch the sandbox from storage and create it.
 	s, err := fetchSandbox(ctx, sandboxID)
@@ -207,97 +174,6 @@ func FetchSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
 	}
 
 	return s, nil
-}
-
-// StartSandbox is the virtcontainers sandbox starting entry point.
-// StartSandbox will talk to the given hypervisor to start an existing
-// sandbox and all its containers.
-// It returns the sandbox ID.
-func StartSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
-	span, ctx := trace(ctx, "StartSandbox")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	// Fetch the sandbox from storage and create it.
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return startSandbox(s)
-}
-
-func startSandbox(s *Sandbox) (*Sandbox, error) {
-	// Start it
-	err := s.Start()
-	if err != nil {
-		return nil, err
-	}
-
-	return s, nil
-}
-
-// StopSandbox is the virtcontainers sandbox stopping entry point.
-// StopSandbox will talk to the given agent to stop an existing sandbox and destroy all containers within that sandbox.
-func StopSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
-	span, ctx := trace(ctx, "StopSandbox")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandbox
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	// Fetch the sandbox from storage and create it.
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	// Stop it.
-	err = s.Stop()
-	if err != nil {
-		return nil, err
-	}
-
-	return s, nil
-}
-
-// RunSandbox is the virtcontainers sandbox running entry point.
-// RunSandbox creates a sandbox and its containers and then it starts them.
-func RunSandbox(ctx context.Context, sandboxConfig SandboxConfig, factory Factory) (VCSandbox, error) {
-	span, ctx := trace(ctx, "RunSandbox")
-	defer span.Finish()
-
-	s, err := createSandboxFromConfig(ctx, sandboxConfig, factory)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	lockFile, err := rwLockSandbox(s.id)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	return startSandbox(s)
 }
 
 // ListSandbox is the virtcontainers sandbox listing entry point.
@@ -344,18 +220,17 @@ func StatusSandbox(ctx context.Context, sandboxID string) (SandboxStatus, error)
 		return SandboxStatus{}, errNeedSandboxID
 	}
 
-	lockFile, err := rwLockSandbox(sandboxID)
+	lockFile, err := LockSandbox(ctx, sandboxID)
 	if err != nil {
 		return SandboxStatus{}, err
 	}
-	defer unlockSandbox(lockFile)
+	defer UnlockSandbox(ctx, lockFile)
 
 	s, err := fetchSandbox(ctx, sandboxID)
 	if err != nil {
-		unlockSandbox(lockFile)
 		return SandboxStatus{}, err
 	}
-	defer s.releaseStatelessSandbox()
+	defer s.Release()
 
 	var contStatusList []ContainerStatus
 	for _, container := range s.containers {
@@ -378,188 +253,6 @@ func StatusSandbox(ctx context.Context, sandboxID string) (SandboxStatus, error)
 	}
 
 	return sandboxStatus, nil
-}
-
-// CreateContainer is the virtcontainers container creation entry point.
-// CreateContainer creates a container on a given sandbox.
-func CreateContainer(ctx context.Context, sandboxID string, containerConfig ContainerConfig) (VCSandbox, VCContainer, error) {
-	span, ctx := trace(ctx, "CreateContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, nil, errNeedSandboxID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	c, err := s.CreateContainer(containerConfig)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return s, c, nil
-}
-
-// DeleteContainer is the virtcontainers container deletion entry point.
-// DeleteContainer deletes a Container from a Sandbox. If the container is running,
-// it needs to be stopped first.
-func DeleteContainer(ctx context.Context, sandboxID, containerID string) (VCContainer, error) {
-	span, ctx := trace(ctx, "DeleteContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return nil, errNeedContainerID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.DeleteContainer(containerID)
-}
-
-// StartContainer is the virtcontainers container starting entry point.
-// StartContainer starts an already created container.
-func StartContainer(ctx context.Context, sandboxID, containerID string) (VCContainer, error) {
-	span, ctx := trace(ctx, "StartContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return nil, errNeedContainerID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.StartContainer(containerID)
-}
-
-// StopContainer is the virtcontainers container stopping entry point.
-// StopContainer stops an already running container.
-func StopContainer(ctx context.Context, sandboxID, containerID string) (VCContainer, error) {
-	span, ctx := trace(ctx, "StopContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return nil, errNeedContainerID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.StopContainer(containerID)
-}
-
-// EnterContainer is the virtcontainers container command execution entry point.
-// EnterContainer enters an already running container and runs a given command.
-func EnterContainer(ctx context.Context, sandboxID, containerID string, cmd Cmd) (VCSandbox, VCContainer, *Process, error) {
-	span, ctx := trace(ctx, "EnterContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, nil, nil, errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return nil, nil, nil, errNeedContainerID
-	}
-
-	lockFile, err := rLockSandbox(sandboxID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	c, process, err := s.EnterContainer(containerID, cmd)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	return s, c, process, nil
-}
-
-// StatusContainer is the virtcontainers container status entry point.
-// StatusContainer returns a detailed container status.
-func StatusContainer(ctx context.Context, sandboxID, containerID string) (ContainerStatus, error) {
-	span, ctx := trace(ctx, "StatusContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return ContainerStatus{}, errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return ContainerStatus{}, errNeedContainerID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return ContainerStatus{}, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		unlockSandbox(lockFile)
-		return ContainerStatus{}, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return statusContainer(s, containerID)
 }
 
 // This function might have to stop the container if it realizes the shim
@@ -612,317 +305,44 @@ func statusContainer(sandbox *Sandbox, containerID string) (ContainerStatus, err
 	return ContainerStatus{}, nil
 }
 
-// KillContainer is the virtcontainers entry point to send a signal
-// to a container running inside a sandbox. If all is true, all processes in
-// the container will be sent the signal.
-func KillContainer(ctx context.Context, sandboxID, containerID string, signal syscall.Signal, all bool) error {
-	span, ctx := trace(ctx, "KillContainer")
+// lock locks the sandbox to prevent it from being accessed by other processes.
+func LockSandbox(ctx context.Context, sandboxID string) (*os.File, error) {
+	span, ctx := trace(ctx, "StatusSandbox")
 	defer span.Finish()
 
-	if sandboxID == "" {
-		return errNeedSandboxID
+	fs := filesystem{}
+	sandboxlockFile, _, err := fs.sandboxURI(sandboxID, lockFileType)
+	if err != nil {
+		return nil, err
 	}
 
-	if containerID == "" {
-		return errNeedContainerID
+	lockFile, err := os.Open(sandboxlockFile)
+	if err != nil {
+		return nil, err
 	}
 
-	lockFile, err := rwLockSandbox(sandboxID)
+	if err := syscall.Flock(int(lockFile.Fd()), exclusiveLock); err != nil {
+		return nil, err
+	}
+
+	return lockFile, nil
+}
+
+// unlock unlocks the sandbox to allow it being accessed by other processes.
+func UnlockSandbox(ctx context.Context, lockFile *os.File) error {
+	span, ctx := trace(ctx, "StatusSandbox")
+	defer span.Finish()
+
+	if lockFile == nil {
+		return fmt.Errorf("lockFile cannot be empty")
+	}
+
+	err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 	if err != nil {
 		return err
 	}
-	defer unlockSandbox(lockFile)
 
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return err
-	}
-	defer s.releaseStatelessSandbox()
+	lockFile.Close()
 
-	return s.KillContainer(containerID, signal, all)
-}
-
-// PauseSandbox is the virtcontainers pausing entry point which pauses an
-// already running sandbox.
-func PauseSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
-	span, ctx := trace(ctx, "PauseSandbox")
-	defer span.Finish()
-
-	return togglePauseSandbox(ctx, sandboxID, true)
-}
-
-// ResumeSandbox is the virtcontainers resuming entry point which resumes
-// (or unpauses) and already paused sandbox.
-func ResumeSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
-	span, ctx := trace(ctx, "ResumeSandbox")
-	defer span.Finish()
-
-	return togglePauseSandbox(ctx, sandboxID, false)
-}
-
-// ProcessListContainer is the virtcontainers entry point to list
-// processes running inside a container
-func ProcessListContainer(ctx context.Context, sandboxID, containerID string, options ProcessListOptions) (ProcessList, error) {
-	span, ctx := trace(ctx, "ProcessListContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return nil, errNeedContainerID
-	}
-
-	lockFile, err := rLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.ProcessListContainer(containerID, options)
-}
-
-// UpdateContainer is the virtcontainers entry point to update
-// container's resources.
-func UpdateContainer(ctx context.Context, sandboxID, containerID string, resources specs.LinuxResources) error {
-	span, ctx := trace(ctx, "UpdateContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return errNeedContainerID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.UpdateContainer(containerID, resources)
-}
-
-// StatsContainer is the virtcontainers container stats entry point.
-// StatsContainer returns a detailed container stats.
-func StatsContainer(ctx context.Context, sandboxID, containerID string) (ContainerStats, error) {
-	span, ctx := trace(ctx, "StatsContainer")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return ContainerStats{}, errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return ContainerStats{}, errNeedContainerID
-	}
-	lockFile, err := rLockSandbox(sandboxID)
-	if err != nil {
-		return ContainerStats{}, err
-	}
-
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return ContainerStats{}, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.StatsContainer(containerID)
-}
-
-func togglePauseContainer(ctx context.Context, sandboxID, containerID string, pause bool) error {
-	if sandboxID == "" {
-		return errNeedSandboxID
-	}
-
-	if containerID == "" {
-		return errNeedContainerID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return err
-	}
-	defer s.releaseStatelessSandbox()
-
-	if pause {
-		return s.PauseContainer(containerID)
-	}
-
-	return s.ResumeContainer(containerID)
-}
-
-// PauseContainer is the virtcontainers container pause entry point.
-func PauseContainer(ctx context.Context, sandboxID, containerID string) error {
-	span, ctx := trace(ctx, "PauseContainer")
-	defer span.Finish()
-
-	return togglePauseContainer(ctx, sandboxID, containerID, true)
-}
-
-// ResumeContainer is the virtcontainers container resume entry point.
-func ResumeContainer(ctx context.Context, sandboxID, containerID string) error {
-	span, ctx := trace(ctx, "ResumeContainer")
-	defer span.Finish()
-
-	return togglePauseContainer(ctx, sandboxID, containerID, false)
-}
-
-// AddDevice will add a device to sandbox
-func AddDevice(ctx context.Context, sandboxID string, info deviceConfig.DeviceInfo) (deviceApi.Device, error) {
-	span, ctx := trace(ctx, "AddDevice")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.AddDevice(info)
-}
-
-func toggleInterface(ctx context.Context, sandboxID string, inf *types.Interface, add bool) (*types.Interface, error) {
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	if add {
-		return s.AddInterface(inf)
-	}
-
-	return s.RemoveInterface(inf)
-}
-
-// AddInterface is the virtcontainers add interface entry point.
-func AddInterface(ctx context.Context, sandboxID string, inf *types.Interface) (*types.Interface, error) {
-	span, ctx := trace(ctx, "AddInterface")
-	defer span.Finish()
-
-	return toggleInterface(ctx, sandboxID, inf, true)
-}
-
-// RemoveInterface is the virtcontainers remove interface entry point.
-func RemoveInterface(ctx context.Context, sandboxID string, inf *types.Interface) (*types.Interface, error) {
-	span, ctx := trace(ctx, "RemoveInterface")
-	defer span.Finish()
-
-	return toggleInterface(ctx, sandboxID, inf, false)
-}
-
-// ListInterfaces is the virtcontainers list interfaces entry point.
-func ListInterfaces(ctx context.Context, sandboxID string) ([]*types.Interface, error) {
-	span, ctx := trace(ctx, "ListInterfaces")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	lockFile, err := rLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.ListInterfaces()
-}
-
-// UpdateRoutes is the virtcontainers update routes entry point.
-func UpdateRoutes(ctx context.Context, sandboxID string, routes []*types.Route) ([]*types.Route, error) {
-	span, ctx := trace(ctx, "UpdateRoutes")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	lockFile, err := rwLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.UpdateRoutes(routes)
-}
-
-// ListRoutes is the virtcontainers list routes entry point.
-func ListRoutes(ctx context.Context, sandboxID string) ([]*types.Route, error) {
-	span, ctx := trace(ctx, "ListRoutes")
-	defer span.Finish()
-
-	if sandboxID == "" {
-		return nil, errNeedSandboxID
-	}
-
-	lockFile, err := rLockSandbox(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlockSandbox(lockFile)
-
-	s, err := fetchSandbox(ctx, sandboxID)
-	if err != nil {
-		return nil, err
-	}
-	defer s.releaseStatelessSandbox()
-
-	return s.ListRoutes()
+	return nil
 }

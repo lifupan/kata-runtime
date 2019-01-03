@@ -128,19 +128,27 @@ func create(ctx context.Context, containerID, bundlePath, console, pidFilePath s
 	disableOutput := noNeedForOutput(detach, ociSpec.Process.Terminal)
 
 	var process vc.Process
+	var sandbox vc.VCSandbox
+
 	switch containerType {
 	case vc.PodSandbox:
-		_, process, err = katautils.CreateSandbox(ctx, vci, ociSpec, runtimeConfig, containerID, bundlePath, console, disableOutput, systemdCgroup, false)
+		sandbox, process, err = katautils.CreateSandbox(ctx, vci, ociSpec, runtimeConfig, containerID, bundlePath, console, disableOutput, systemdCgroup, false)
 		if err != nil {
 			return err
 		}
 	case vc.PodContainer:
-		process, err = katautils.CreateContainer(ctx, vci, nil, ociSpec, containerID, bundlePath, console, disableOutput, false)
+		// Checks the MUST and MUST NOT from OCI runtime specification
+		_, sandbox, err = getExistingContainerInfo(ctx, containerID)
+		if err != nil {
+			return err
+		}
+		process, err = katautils.CreateContainer(ctx, vci, sandbox, ociSpec, containerID, bundlePath, console, disableOutput, false)
 		if err != nil {
 			return err
 		}
 	}
 
+	sandbox.Release()
 	// Creation of PID file has to be the last thing done in the create
 	// because containerd considers the create complete after this file
 	// is created.

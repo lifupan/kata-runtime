@@ -198,14 +198,22 @@ func execute(ctx context.Context, context *cli.Context) error {
 	setExternalLoggers(ctx, kataLog)
 	span.SetTag("container", containerID)
 
-	status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+	status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 	if err != nil {
 		return err
 	}
 
-	kataLog = kataLog.WithField("sandbox", sandboxID)
+	defer sandbox.Release()
+
+	lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+	if err != nil {
+		return err
+	}
+	defer vc.UnlockSandbox(ctx, lockFile)
+
+	kataLog = kataLog.WithField("sandbox", sandbox.ID())
 	setExternalLoggers(ctx, kataLog)
-	span.SetTag("sandbox", sandboxID)
+	span.SetTag("sandbox", sandbox.ID())
 
 	// Retrieve OCI spec configuration.
 	ociSpec, err := oci.GetOCIConfig(status)
@@ -258,7 +266,7 @@ func execute(ctx context.Context, context *cli.Context) error {
 		Detach:      noNeedForOutput(params.detach, params.ociProcess.Terminal),
 	}
 
-	_, _, process, err := vci.EnterContainer(ctx, sandboxID, params.cID, cmd)
+	_, process, err := sandbox.EnterContainer(params.cID, cmd)
 	if err != nil {
 		return err
 	}

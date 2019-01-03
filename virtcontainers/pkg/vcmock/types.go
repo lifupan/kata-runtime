@@ -7,13 +7,9 @@ package vcmock
 
 import (
 	"context"
-	"syscall"
+	"os"
 
 	vc "github.com/kata-containers/runtime/virtcontainers"
-	"github.com/kata-containers/runtime/virtcontainers/device/api"
-	"github.com/kata-containers/runtime/virtcontainers/device/config"
-	"github.com/kata-containers/runtime/virtcontainers/pkg/types"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,34 +40,9 @@ type VCMock struct {
 	SetFactoryFunc func(ctx context.Context, factory vc.Factory)
 
 	CreateSandboxFunc  func(ctx context.Context, sandboxConfig vc.SandboxConfig) (vc.VCSandbox, error)
-	DeleteSandboxFunc  func(ctx context.Context, sandboxID string) (vc.VCSandbox, error)
 	ListSandboxFunc    func(ctx context.Context) ([]vc.SandboxStatus, error)
 	FetchSandboxFunc   func(ctx context.Context, sandboxID string) (vc.VCSandbox, error)
-	PauseSandboxFunc   func(ctx context.Context, sandboxID string) (vc.VCSandbox, error)
-	ResumeSandboxFunc  func(ctx context.Context, sandboxID string) (vc.VCSandbox, error)
-	RunSandboxFunc     func(ctx context.Context, sandboxConfig vc.SandboxConfig) (vc.VCSandbox, error)
-	StartSandboxFunc   func(ctx context.Context, sandboxID string) (vc.VCSandbox, error)
-	StatusSandboxFunc  func(ctx context.Context, sandboxID string) (vc.SandboxStatus, error)
-	StatsContainerFunc func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStats, error)
-	StopSandboxFunc    func(ctx context.Context, sandboxID string) (vc.VCSandbox, error)
 
-	CreateContainerFunc      func(ctx context.Context, sandboxID string, containerConfig vc.ContainerConfig) (vc.VCSandbox, vc.VCContainer, error)
-	DeleteContainerFunc      func(ctx context.Context, sandboxID, containerID string) (vc.VCContainer, error)
-	EnterContainerFunc       func(ctx context.Context, sandboxID, containerID string, cmd vc.Cmd) (vc.VCSandbox, vc.VCContainer, *vc.Process, error)
-	KillContainerFunc        func(ctx context.Context, sandboxID, containerID string, signal syscall.Signal, all bool) error
-	StartContainerFunc       func(ctx context.Context, sandboxID, containerID string) (vc.VCContainer, error)
-	StatusContainerFunc      func(ctx context.Context, sandboxID, containerID string) (vc.ContainerStatus, error)
-	StopContainerFunc        func(ctx context.Context, sandboxID, containerID string) (vc.VCContainer, error)
-	ProcessListContainerFunc func(ctx context.Context, sandboxID, containerID string, options vc.ProcessListOptions) (vc.ProcessList, error)
-	UpdateContainerFunc      func(ctx context.Context, sandboxID, containerID string, resources specs.LinuxResources) error
-	PauseContainerFunc       func(ctx context.Context, sandboxID, containerID string) error
-	ResumeContainerFunc      func(ctx context.Context, sandboxID, containerID string) error
-
-	AddDeviceFunc func(ctx context.Context, sandboxID string, info config.DeviceInfo) (api.Device, error)
-
-	AddInterfaceFunc    func(ctx context.Context, sandboxID string, inf *types.Interface) (*types.Interface, error)
-	RemoveInterfaceFunc func(ctx context.Context, sandboxID string, inf *types.Interface) (*types.Interface, error)
-	ListInterfacesFunc  func(ctx context.Context, sandboxID string) ([]*types.Interface, error)
-	UpdateRoutesFunc    func(ctx context.Context, sandboxID string, routes []*types.Route) ([]*types.Route, error)
-	ListRoutesFunc      func(ctx context.Context, sandboxID string) ([]*types.Route, error)
+	LockSandboxFunc    func(ctx context.Context, sandboxID string) (*os.File, error)
+	UnlockSandboxFunc  func(ctx context.Context, lockFile *os.File) error
 }

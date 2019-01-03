@@ -63,21 +63,29 @@ func ps(ctx context.Context, containerID, format string, args []string) error {
 	span.SetTag("container", containerID)
 
 	// Checks the MUST and MUST NOT from OCI runtime specification
-	status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+	status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 	if err != nil {
 		return err
 	}
+
+	defer sandbox.Release()
+
+	lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+	if err != nil {
+		return err
+	}
+	defer vc.UnlockSandbox(ctx, lockFile)
 
 	containerID = status.ID
 
 	kataLog = kataLog.WithFields(logrus.Fields{
 		"container": containerID,
-		"sandbox":   sandboxID,
+		"sandbox":   sandbox.ID(),
 	})
 
 	setExternalLoggers(ctx, kataLog)
 	span.SetTag("container", containerID)
-	span.SetTag("sandbox", sandboxID)
+	span.SetTag("sandbox", sandbox.ID())
 
 	// container MUST be running
 	if status.State.State != vc.StateRunning {
@@ -93,7 +101,7 @@ func ps(ctx context.Context, containerID, format string, args []string) error {
 
 	options.Format = format
 
-	msg, err := vci.ProcessListContainer(ctx, containerID, sandboxID, options)
+	msg, err := sandbox.ProcessListContainer(containerID, options)
 	if err != nil {
 		return err
 	}

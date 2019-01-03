@@ -69,22 +69,29 @@ func delete(ctx context.Context, containerID string, force bool) error {
 	span.SetTag("container", containerID)
 
 	// Checks the MUST and MUST NOT from OCI runtime specification
-	status, sandboxID, err := getExistingContainerInfo(ctx, containerID)
+	status, sandbox, err := getExistingContainerInfo(ctx, containerID)
 	if err != nil {
 		return err
 	}
+	defer sandbox.Release()
+
+	lockFile, err := vc.LockSandbox(ctx, sandbox.ID())
+	if err != nil {
+		return err
+	}
+	defer vc.UnlockSandbox(ctx, lockFile)
 
 	containerID = status.ID
 
 	kataLog = kataLog.WithFields(logrus.Fields{
 		"container": containerID,
-		"sandbox":   sandboxID,
+		"sandbox":   sandbox.ID(),
 	})
 
 	setExternalLoggers(ctx, kataLog)
 
 	span.SetTag("container", containerID)
-	span.SetTag("sandbox", sandboxID)
+	span.SetTag("sandbox", sandbox.ID())
 
 	containerType, err := oci.GetContainerType(status.Annotations)
 	if err != nil {
@@ -108,11 +115,11 @@ func delete(ctx context.Context, containerID string, force bool) error {
 
 	switch containerType {
 	case vc.PodSandbox:
-		if err := deleteSandbox(ctx, sandboxID); err != nil {
+		if err := deleteSandbox(ctx, sandbox); err != nil {
 			return err
 		}
 	case vc.PodContainer:
-		if err := deleteContainer(ctx, sandboxID, containerID, forceStop); err != nil {
+		if err := deleteContainer(ctx, sandbox, containerID, forceStop); err != nil {
 			return err
 		}
 	default:
@@ -120,46 +127,43 @@ func delete(ctx context.Context, containerID string, force bool) error {
 	}
 
 	// Run post-stop OCI hooks.
-	if err := katautils.PostStopHooks(ctx, ociSpec, sandboxID, status.Annotations[vcAnnot.BundlePathKey]); err != nil {
+	if err := katautils.PostStopHooks(ctx, ociSpec, sandbox.ID(), status.Annotations[vcAnnot.BundlePathKey]); err != nil {
 		return err
 	}
 
 	return katautils.DelContainerIDMapping(ctx, containerID)
 }
 
-func deleteSandbox(ctx context.Context, sandboxID string) error {
+func deleteSandbox(ctx context.Context, sandbox vc.VCSandbox) error {
 	span, _ := katautils.Trace(ctx, "deleteSandbox")
 	defer span.Finish()
 
-	status, err := vci.StatusSandbox(ctx, sandboxID)
-	if err != nil {
-		return err
-	}
+	status := sandbox.Status()
 
 	if oci.StateToOCIState(status.State) != oci.StateStopped {
-		if _, err := vci.StopSandbox(ctx, sandboxID); err != nil {
+		if err := sandbox.Stop(); err != nil {
 			return err
 		}
 	}
 
-	if _, err := vci.DeleteSandbox(ctx, sandboxID); err != nil {
+	if err := sandbox.Delete(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func deleteContainer(ctx context.Context, sandboxID, containerID string, forceStop bool) error {
+func deleteContainer(ctx context.Context, sandbox vc.VCSandbox, containerID string, forceStop bool) error {
 	span, _ := katautils.Trace(ctx, "deleteContainer")
 	defer span.Finish()
 
 	if forceStop {
-		if _, err := vci.StopContainer(ctx, sandboxID, containerID); err != nil {
+		if _, err := sandbox.StopContainer(containerID); err != nil {
 			return err
 		}
 	}
 
-	if _, err := vci.DeleteContainer(ctx, sandboxID, containerID); err != nil {
+	if _, err := sandbox.DeleteContainer(containerID); err != nil {
 		return err
 	}
 

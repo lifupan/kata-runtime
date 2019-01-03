@@ -198,6 +198,8 @@ func CreateContainer(ctx context.Context, vci vc.VC, sandbox vc.VCSandbox, ociSp
 	span, ctx := Trace(ctx, "createContainer")
 	defer span.Finish()
 
+	kataUtilsLogger = kataUtilsLogger.WithField("sandbox", sandbox.ID())
+
 	ociSpec = SetEphemeralStorageType(ociSpec)
 
 	contConfig, err := oci.ContainerConfig(ociSpec, bundlePath, containerID, console, disableOutput)
@@ -212,25 +214,12 @@ func CreateContainer(ctx context.Context, vci vc.VC, sandbox vc.VCSandbox, ociSp
 
 	span.SetTag("sandbox", sandboxID)
 
-	if builtIn {
-		c, err = sandbox.CreateContainer(contConfig)
-		if err != nil {
-			return vc.Process{}, err
-		}
-	} else {
-		kataUtilsLogger = kataUtilsLogger.WithField("sandbox", sandboxID)
+	c, err = sandbox.CreateContainer(contConfig)
+	if err != nil {
+		return vc.Process{}, err
+	}
 
-		sandbox, c, err = vci.CreateContainer(ctx, sandboxID, contConfig)
-		if err != nil {
-			return vc.Process{}, err
-		}
-
-		if err := AddContainerIDMapping(ctx, containerID, sandboxID); err != nil {
-			return vc.Process{}, err
-		}
-
-		kataUtilsLogger = kataUtilsLogger.WithField("sandbox", sandboxID)
-
+	if !builtIn {
 		if err := AddContainerIDMapping(ctx, containerID, sandboxID); err != nil {
 			return vc.Process{}, err
 		}

@@ -32,43 +32,48 @@ var cgroupsDirPath string
 var procMountInfo = "/proc/self/mountinfo"
 
 // getContainerInfo returns the container status and its sandbox ID.
-func getContainerInfo(ctx context.Context, containerID string) (vc.ContainerStatus, string, error) {
+func getContainerInfo(ctx context.Context, containerID string) (vc.ContainerStatus, vc.VCSandbox, error) {
 	// container ID MUST be provided.
 	if containerID == "" {
-		return vc.ContainerStatus{}, "", fmt.Errorf("Missing container ID")
+		return vc.ContainerStatus{}, nil, fmt.Errorf("Missing container ID")
 	}
 
 	sandboxID, err := katautils.FetchContainerIDMapping(containerID)
 	if err != nil {
-		return vc.ContainerStatus{}, "", err
+		return vc.ContainerStatus{}, nil, err
 	}
 	if sandboxID == "" {
 		// Not finding a container should not trigger an error as
 		// getContainerInfo is used for checking the existence and
 		// the absence of a container ID.
-		return vc.ContainerStatus{}, "", nil
+		return vc.ContainerStatus{}, nil, nil
 	}
 
-	ctrStatus, err := vci.StatusContainer(ctx, sandboxID, containerID)
+	sandbox, err := vci.FetchSandbox(ctx, sandboxID)
 	if err != nil {
-		return vc.ContainerStatus{}, "", err
+		return vc.ContainerStatus{}, nil, err
 	}
 
-	return ctrStatus, sandboxID, nil
+	ctrStatus, err := sandbox.StatusContainer(containerID)
+	if err != nil {
+		return vc.ContainerStatus{}, nil, err
+	}
+
+	return ctrStatus, sandbox, nil
 }
 
-func getExistingContainerInfo(ctx context.Context, containerID string) (vc.ContainerStatus, string, error) {
-	cStatus, sandboxID, err := getContainerInfo(ctx, containerID)
+func getExistingContainerInfo(ctx context.Context, containerID string) (vc.ContainerStatus, vc.VCSandbox, error) {
+	cStatus, sandbox, err := getContainerInfo(ctx, containerID)
 	if err != nil {
-		return vc.ContainerStatus{}, "", err
+		return vc.ContainerStatus{}, nil, err
 	}
 
 	// container ID MUST exist.
 	if cStatus.ID == "" {
-		return vc.ContainerStatus{}, "", fmt.Errorf("Container ID (%v) does not exist", containerID)
+		return vc.ContainerStatus{}, nil, fmt.Errorf("Container ID (%v) does not exist", containerID)
 	}
 
-	return cStatus, sandboxID, nil
+	return cStatus, sandbox, nil
 }
 
 func validCreateParams(ctx context.Context, containerID, bundlePath string) (string, error) {
