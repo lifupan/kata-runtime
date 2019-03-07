@@ -275,6 +275,45 @@ func TestContainerAddDriveDir(t *testing.T) {
 	}
 }
 
+func TestContainerRootfsPath(t *testing.T) {
+	container := Container{
+		rootFs:       "/run/container.runtime/default/test-kata-rootfs/rootfs",
+		rootfsSuffix: "rootfs",
+	}
+
+	truegetpathdevice := getDeviceForPath
+	truecheckstoragedriver := checkStorageDriver
+	getDeviceForPath = func(path string) (device, error) {
+		return device{
+			major:      0,
+			minor:      1,
+			mountPoint: path,
+		}, nil
+	}
+
+	checkStorageDriver = func(major, minor int) (bool, error) {
+		return true, nil
+	}
+	defer func() {
+		getDeviceForPath = truegetpathdevice
+		checkStorageDriver = truecheckstoragedriver
+	}()
+	container.hotplugDrive()
+	assert.Empty(t, container.rootfsSuffix)
+
+	// Reset the value to test the other case
+	container.rootfsSuffix = "rootfs"
+	getDeviceForPath = func(path string) (device, error) {
+		return device{
+			major:      0,
+			minor:      1,
+			mountPoint: path[0:(strings.LastIndex(path, "/"))],
+		}, nil
+	}
+	container.hotplugDrive()
+	assert.Equal(t, container.rootfsSuffix, "rootfs")
+}
+
 func TestCheckSandboxRunningEmptyCmdFailure(t *testing.T) {
 	c := &Container{}
 	err := c.checkSandboxRunning("")

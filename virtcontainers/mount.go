@@ -89,7 +89,9 @@ var errMountPointNotFound = errors.New("Mount point not found")
 //		manor : minor(/dev/sda1)
 //		mountPoint: /a/b/c
 //	}
-func getDeviceForPath(path string) (device, error) {
+var getDeviceForPath = findDeviceForPath
+
+func findDeviceForPath(path string) (device, error) {
 	if path == "" {
 		return device{}, fmt.Errorf("Path cannot be empty")
 	}
