@@ -113,6 +113,14 @@ func findDeviceForPath(path string) (device, error) {
 
 	mountPoint := path
 
+	if (os.FileMode(stat.Mode) & os.ModeDevice) != 0 {
+		return device{
+			major:      major,
+			minor:      minor,
+			mountPoint: "",
+		}, nil
+	}
+
 	if path == "/" {
 		return device{
 			major:      major,

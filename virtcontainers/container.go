@@ -208,7 +208,7 @@ type ContainerConfig struct {
 	ID string
 
 	// RootFs is the container workload image on the host.
-	RootFs string
+	RootFs RootFs
 
 	// ReadOnlyRootfs indicates if the rootfs should be mounted readonly
 	ReadonlyRootfs bool
@@ -261,13 +261,27 @@ type ContainerDevice struct {
 	ContainerPath string
 }
 
+// RootFs describes the container's rootfs.
+type RootFs struct {
+	// Source specify the BlockDevice path
+	Source      string
+	// MountPoint specify where the rootfs is mounted if it has been mounted
+	MountPoint string
+
+	// Type specifies the type of filesystem to mount.
+	Type string
+
+	// Mounted specifies if the rootfs has be mounted or not
+	Mounted bool
+}
+
 // Container is composed of a set of containers and a runtime environment.
 // A Container can be created, deleted, started, stopped, listed, entered, paused and restored.
 type Container struct {
 	id        string
 	sandboxID string
 
-	rootFs string
+	rootFs RootFs
 
 	config *ContainerConfig
 
@@ -1108,7 +1122,16 @@ func (c *Container) resume() error {
 }
 
 func (c *Container) hotplugDrive() error {
-	dev, err := getDeviceForPath(c.rootFs)
+	var dev device
+	var err error
+
+	// container rootfs is blockdevice backed and isn't mounted
+	if !c.rootFs.Mounted {
+		dev, err = getDeviceForPath(c.rootFs.Source)
+		c.rootfsSuffix = ""
+	} else {
+		dev, err = getDeviceForPath(c.rootFs.MountPoint)
+	}
 
 	if err == errMountPointNotFound {
 		return nil
@@ -1133,14 +1156,19 @@ func (c *Container) hotplugDrive() error {
 		return nil
 	}
 
-	if dev.mountPoint == c.rootFs {
+	if dev.mountPoint == c.rootFs.MountPoint {
 		c.rootfsSuffix = ""
 	}
 
-	// If device mapper device, then fetch the full path of the device
-	devicePath, fsType, err := getDevicePathAndFsType(dev.mountPoint)
-	if err != nil {
-		return err
+	devicePath := c.rootFs.Source
+	fsType := c.rootFs.Type
+
+	if c.rootFs.Mounted {
+		// If device mapper device, then fetch the full path of the device
+		devicePath, fsType, err = getDevicePathAndFsType(dev.mountPoint)
+		if err != nil {
+			return err
+		}
 	}
 
 	devicePath, err = filepath.EvalSymlinks(devicePath)

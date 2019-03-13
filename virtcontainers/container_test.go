@@ -236,7 +236,7 @@ func TestContainerAddDriveDir(t *testing.T) {
 	container := Container{
 		sandbox: sandbox,
 		id:      contID,
-		rootFs:  fakeRootfs,
+		rootFs:  RootFs{MountPoint:fakeRootfs, Mounted:true},
 	}
 
 	containerStore, err := store.NewVCContainerStore(sandbox.ctx, sandbox.id, container.id)
@@ -277,7 +277,7 @@ func TestContainerAddDriveDir(t *testing.T) {
 
 func TestContainerRootfsPath(t *testing.T) {
 	container := Container{
-		rootFs:       "/run/container.runtime/default/test-kata-rootfs/rootfs",
+		rootFs:       RootFs{MountPoint:"/run/container.runtime/default/test-kata-rootfs/rootfs", Mounted:true},
 		rootfsSuffix: "rootfs",
 	}
 
