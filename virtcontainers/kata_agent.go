@@ -971,6 +971,10 @@ func (k *kataAgent) buildContainerRootfs(sandbox *Sandbox, c *Container, rootPat
 			rootfs.Options = []string{"nouuid"}
 		}
 
+		if len(c.config.RootFs.Options) > 0 {
+			rootfs.Options = append(rootfs.Options, c.config.RootFs.Options...)
+		}
+
 		return rootfs, nil
 	}
 
@@ -982,7 +986,7 @@ func (k *kataAgent) buildContainerRootfs(sandbox *Sandbox, c *Container, rootPat
 	// (kataGuestSharedDir) is already mounted in the
 	// guest. We only need to mount the rootfs from
 	// the host and it will show up in the guest.
-	if err := bindMountContainerRootfs(k.ctx, kataHostSharedDir, sandbox.id, c.id, c.rootFs, false); err != nil {
+	if err := bindMountContainerRootfs(k.ctx, kataHostSharedDir, sandbox.id, c.id, c.rootFs.Target, false); err != nil {
 		return nil, err
 	}
 
