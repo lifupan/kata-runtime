@@ -197,11 +197,13 @@ func checkAndMount(s *service, r *taskAPI.CreateTaskRequest) error {
 	if len(r.Rootfs) == 1 {
 		m := r.Rootfs[0]
 
-		if katautils.IsBlockDevice(m.Source) && !s.config.HypervisorConfig.DisableBlockDeviceUse {
+		if katautils.IsBlockDevice(m) && !s.config.HypervisorConfig.DisableBlockDeviceUse {
+                        logrus.WithField("ID", r.ID).Debugf("Container rootfs is based on a block device %+v", m)
 			s.mount = false
 			return nil
 		}
 	}
+	logrus.WithField("ID", r.ID).Debugf("Container rootfs is based on directory %+v", r.Rootfs)
 	rootfs := filepath.Join(r.Bundle, "rootfs")
 	if err := doMount(r.Rootfs, rootfs); err != nil {
 		return err

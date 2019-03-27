@@ -8,7 +8,6 @@ package katautils
 
 import (
 	"fmt"
-	"golang.org/x/sys/unix"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -16,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 
+	containerd_types "github.com/containerd/containerd/api/types"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 )
 
@@ -79,27 +79,26 @@ func ResolvePath(path string) (string, error) {
 	return resolved, nil
 }
 
-// IsBlockDevice returns true if the give path is a block device
-func IsBlockDevice(filePath string) bool {
-	var stat unix.Stat_t
+// IsBlockDevice returns true if the given mount is based on a block device.
+// Here check the mount's Type, if it is one of ext[2-4], btrfs and xfs filesystem,
+// we assume this mount is based on a block device.
+func IsBlockDevice(m *containerd_types.Mount) bool {
+	fsType := strings.Trim(m.Type, " ")
+	fsTyperPrefix := fsType[:len(fsType)-1]
 
-	if filePath == "" {
-		return false
-	}
-
-	devicePath, err := ResolvePath(filePath)
-	if err != nil {
-		return false
-	}
-
-	if err := unix.Stat(devicePath, &stat); err != nil {
-		return false
-	}
-
-	if stat.Mode&unix.S_IFBLK == unix.S_IFBLK {
+	switch fsTyperPrefix {
+	//ext2, ext3, ext4 filesystem
+	case "ext":
+		fallthrough
+	//btrfs filesystem
+	case "btrf":
+		fallthrough
+	//xfs filesystem
+	case "xf":
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // fileSize returns the number of bytes in the specified file

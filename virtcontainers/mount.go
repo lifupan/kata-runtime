@@ -89,18 +89,8 @@ var errMountPointNotFound = errors.New("Mount point not found")
 //		minor : minor(/dev/sda1)
 //		mountPoint: /a/b/c
 //	}
-//
-//	if the path is a device path file such as /dev/sda1, it would return
-//
-//	device {
-//		major : major(/dev/sda1)
-//		minor : minor(/dev/sda1)
-//		mountPoint:
 
 func getDeviceForPath(path string) (device, error) {
-	var devMajor int
-	var devMinor int
-
 	if path == "" {
 		return device{}, fmt.Errorf("Path cannot be empty")
 	}
@@ -111,20 +101,9 @@ func getDeviceForPath(path string) (device, error) {
 		return device{}, err
 	}
 
-	if isHostDevice(path) {
-		// stat.Rdev describes the device that this file (inode) represents.
-		devMajor = major(stat.Rdev)
-		devMinor = minor(stat.Rdev)
-
-		return device{
-			major:      devMajor,
-			minor:      devMinor,
-			mountPoint: "",
-		}, nil
-	}
 	// stat.Dev points to the underlying device containing the file
-	devMajor = major(stat.Dev)
-	devMinor = minor(stat.Dev)
+	major := major(stat.Dev)
+	minor := minor(stat.Dev)
 
 	path, err = filepath.Abs(path)
 	if err != nil {
@@ -135,8 +114,8 @@ func getDeviceForPath(path string) (device, error) {
 
 	if path == "/" {
 		return device{
-			major:      devMajor,
-			minor:      devMinor,
+			major:      major,
+			minor:      minor,
 			mountPoint: mountPoint,
 		}, nil
 	}
@@ -166,8 +145,8 @@ func getDeviceForPath(path string) (device, error) {
 	}
 
 	dev := device{
-		major:      devMajor,
-		minor:      devMinor,
+		major:      major,
+		minor:      minor,
 		mountPoint: mountPoint,
 	}
 
