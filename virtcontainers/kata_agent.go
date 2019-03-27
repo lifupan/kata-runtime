@@ -971,10 +971,7 @@ func (k *kataAgent) buildContainerRootfs(sandbox *Sandbox, c *Container, rootPat
 			rootfs.Options = []string{"nouuid"}
 		}
 
-		if len(c.config.RootFs.Options) > 0 {
-			rootfs.Options = append(rootfs.Options, c.config.RootFs.Options...)
-		}
-
+		k.Logger().Infof("==========================c rootfs=%+v", rootfs)
 		return rootfs, nil
 	}
 
