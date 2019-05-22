@@ -1,0 +1,7 @@
+INFO[2019-05-07T21:58:26.259373480-04:00] StopPodSandbox for "5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47"
+ERRO[2019-05-07T21:58:26.277341025-04:00] StopPodSandbox for "5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47" failed  error="failed to stop sandbox container \"5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47\" in '\\x00' state: failed to get sandbox container: ttrpc: client shutting down: read unix @->@/containerd-shim/k8s.io/5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47/shim.sock: read: connection reset by peer: unknown"
+ERRO[2019-05-07T21:58:26.277408139-04:00] shim shutdown error                           error="ttrpc: client shutting down: read unix @->@/containerd-shim/k8s.io/5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47/shim.sock: read: connection reset by peer: unknown"
+INFO[2019-05-07T21:58:26.279010279-04:00] RemovePodSandbox for "5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47"
+ERRO[2019-05-07T21:58:26.279067153-04:00] RemovePodSandbox for "5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47" failed  error="sandbox container \"5e0c61928ae958e60e744bd99068b546a90f7bdd8541be5be616bee18dc67b47\" is not fully stopped"
+DEBU[2019-05-07T21:58:26.298625148-04:00] event published                               ns=k8s.io topic=/tasks/exit type=containerd.events.TaskExit
+
