@@ -59,8 +59,12 @@ func wait(s *service, c *container, execID string) (int32, error) {
 				logrus.WithField("sandbox", s.sandbox.ID()).Error("failed to delete sandbox")
 			}
 		} else {
-			if _, err = s.sandbox.StopContainer(c.id); err != nil {
-				logrus.WithError(err).WithField("container", c.id).Warn("stop container failed")
+			// In case the Sandbox Container exited first, and it will stop and delete all of the
+			// containers, thus there is no need to stop it here.
+			if s.sandbox.GetContainer(c.id) != nil {
+				if _, err = s.sandbox.StopContainer(c.id); err != nil {
+					logrus.WithError(err).WithField("container", c.id).Warn("stop container failed")
+				}
 			}
 		}
 		c.status = task.StatusStopped
