@@ -298,3 +298,10 @@ func (m *VCMock) ListRoutes(ctx context.Context, sandboxID string) ([]*vcTypes.R
 
 	return nil, fmt.Errorf("%s: %s (%+v): sandboxID: %v", mockErrorPrefix, getSelf(), m, sandboxID)
 }
+
+func (m *VCMock) CleanupContainer(ctx context.Context, sandboxID, containerID string) error {
+	if m.CleanupContainerFunc != nil {
+		return m.CleanupContainerFunc(ctx, sandboxID, containerID)
+	}
+	return fmt.Errorf("%s: %s (%+v): sandboxID: %v", mockErrorPrefix, getSelf(), m, sandboxID)
+}

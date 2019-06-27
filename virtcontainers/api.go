@@ -931,3 +931,55 @@ func ListRoutes(ctx context.Context, sandboxID string) ([]*vcTypes.Route, error)
 
 	return s.ListRoutes()
 }
+
+// CleanupContaienr is used by shimv2 to stop and delete a container exclusively, once there is no container
+// in the sandbox left, do stop the sandbox and delete it. Those serial operations will be done exclusively by
+// locking the sandbox.
+func CleanupContainer(ctx context.Context, sandboxID, containerID string) error {
+	span, ctx := trace(ctx, "CleanupContainer")
+	defer span.Finish()
+
+	if sandboxID == "" {
+		return vcTypes.ErrNeedSandboxID
+	}
+
+	if containerID == "" {
+		return vcTypes.ErrNeedContainerID
+	}
+
+	lockFile, err := rwLockSandbox(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+	defer unlockSandbox(ctx, sandboxID, lockFile)
+
+	s, err := fetchSandbox(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+
+	defer s.Release()
+
+	_, err = s.StopContainer(containerID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.DeleteContainer(containerID); err != nil {
+		return err
+	}
+
+	if len(s.GetAllContainers()) > 0 {
+		return nil
+	}
+
+	if err = s.Stop(); err != nil {
+		return err
+	}
+
+	if err = s.Delete(); err != nil {
+		return err
+	}
+
+	return nil
+}

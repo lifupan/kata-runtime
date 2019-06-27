@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -1859,4 +1860,47 @@ func TestNetworkOperation(t *testing.T) {
 
 	_, err = ListRoutes(ctx, s.ID())
 	assert.NoError(err)
+}
+
+func TestCleanupContainer(t *testing.T) {
+	config := newTestSandboxConfigNoop()
+
+	ctx := context.Background()
+
+	p, _, err := createAndStartSandbox(ctx, config)
+	if p == nil || err != nil {
+		t.Fatal(err)
+	}
+
+	contIDs := []string{"100", "101", "102", "103", "104"}
+	for _, contID := range contIDs {
+		contConfig := newTestContainerConfigNoop(contID)
+
+		c, err := p.CreateContainer(contConfig)
+		if c == nil || err != nil {
+			t.Fatal(err)
+		}
+
+		c, err = p.StartContainer(c.ID())
+		if c == nil || err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, c := range p.GetAllContainers() {
+		wg.Add(1)
+		go func(cid string) {
+			defer wg.Done()
+			CleanupContainer(ctx, p.ID(), cid)
+		}(c.ID())
+	}
+
+	wg.Wait()
+	sandboxDir := store.SandboxConfigurationRootPath(p.ID())
+
+	_, err = os.Stat(sandboxDir)
+	if err == nil {
+		t.Fatal(err)
+	}
 }
