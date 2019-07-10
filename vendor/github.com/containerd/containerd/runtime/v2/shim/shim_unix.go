@@ -45,6 +45,9 @@ func setupSignals(config Config) (chan os.Signal, error) {
 	if !config.NoReaper {
 		smp = append(smp, unix.SIGCHLD)
 	}
+	if config.Upgrade {
+		smp =  append(smp, unix.SIGHUP)
+	}
 	signal.Notify(signals, smp...)
 	return signals, nil
 }
@@ -74,16 +77,23 @@ func serveListener(path string) (net.Listener, error) {
 	return l, nil
 }
 
-func handleSignals(logger *logrus.Entry, signals chan os.Signal) error {
+func handleSignals(c *Client, logger *logrus.Entry) error {
 	logger.Info("starting signal loop")
 	for {
 		select {
-		case s := <-signals:
+		case s := <-c.signals:
 			switch s {
 			case unix.SIGCHLD:
 				if err := Reap(); err != nil {
 					logger.WithError(err).Error("reap exit status")
 				}
+			case unix.SIGHUP:
+				logger.Info("received signal sighup, do upgrade forking!")
+				if err := c.upgradeFork();  err != nil {
+					logger.WithError(err).Error("upgrade fork failed")
+				}
+			case unix.SIGTERM:
+				return nil
 			case unix.SIGPIPE:
 			}
 		}
@@ -127,4 +137,33 @@ func (l *remoteEventsPublisher) Publish(ctx context.Context, topic string, event
 		return errors.New("failed to publish event")
 	}
 	return nil
+}
+
+func newCommand(ns, containerdBinary, id, containerdAddress string) (*exec.Cmd, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	args := []string{
+		"-namespace", ns,
+		"-address", containerdAddress,
+		"-publish-binary", containerdBinary,
+		"-id", id,
+		"-debug",
+	}
+	cmd := exec.Command(self, args...)
+	cmd.Dir = cwd
+
+	// Set the go max process to 2 in case the shim forks too much process
+	cmd.Env = append(os.Environ(), "CONTAINERD_SHIMV2_CONTINUE=1")
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	return cmd, nil
 }

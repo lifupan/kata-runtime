@@ -24,7 +24,9 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
+	"net"
 
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/log"
@@ -41,6 +43,8 @@ type Client struct {
 	service shimapi.TaskService
 	context context.Context
 	signals chan os.Signal
+	listenFile *os.File
+	isChild bool
 }
 
 // Init func for the creation of a shim server
@@ -71,10 +75,12 @@ type Config struct {
 	NoSubreaper bool
 	// NoReaper disables the shim binary from reaping any child process implicitly
 	NoReaper bool
+	Upgrade bool
 }
 
 var (
 	debugFlag            bool
+	upgradeForked 		 bool
 	idFlag               string
 	namespaceFlag        string
 	socketFlag           string
@@ -169,13 +175,15 @@ func run(id string, initFunc Init, config Config) error {
 	if err != nil {
 		return err
 	}
+	client := NewShimClient(ctx, service, signals)
+
 	switch action {
 	case "delete":
 		logger := logrus.WithFields(logrus.Fields{
 			"pid":       os.Getpid(),
 			"namespace": namespaceFlag,
 		})
-		go handleSignals(logger, signals)
+		go handleSignals(client, logger)
 		response, err := service.Cleanup(ctx)
 		if err != nil {
 			return err
@@ -201,17 +209,19 @@ func run(id string, initFunc Init, config Config) error {
 		if err := setLogger(ctx, idFlag); err != nil {
 			return err
 		}
-		client := NewShimClient(ctx, service, signals)
 		return client.Serve()
 	}
 }
 
 // NewShimClient creates a new shim server client
 func NewShimClient(ctx context.Context, svc shimapi.TaskService, signals chan os.Signal) *Client {
+	isChild := os.Getenv("CONTAINERD_SHIMV2_CONTINUE") != ""
+
 	s := &Client{
 		service: svc,
 		context: ctx,
 		signals: signals,
+		isChild: isChild,
 	}
 	return s
 }
@@ -233,7 +243,12 @@ func (s *Client) Serve() error {
 	logrus.Debug("registering ttrpc server")
 	shimapi.RegisterTaskService(server, s.service)
 
-	if err := serve(s.context, server, socketFlag); err != nil {
+	l,  err := s.getListener(socketFlag)
+	if err != nil  {
+		return err
+	}
+
+	if err := serve(s.context, server, l); err != nil {
 		return err
 	}
 	logger := logrus.WithFields(logrus.Fields{
@@ -241,21 +256,83 @@ func (s *Client) Serve() error {
 		"path":      path,
 		"namespace": namespaceFlag,
 	})
+
+	if s.isChild {
+		logrus.Info("----------------send term signal to parent")
+		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
+	}
+
 	go func() {
 		for range dump {
 			dumpStacks(logger)
 		}
 	}()
-	return handleSignals(logger, s.signals)
+	return handleSignals(s, logger)
 }
 
-// serve serves the ttrpc API over a unix socket at the provided path
-// this function does not block
-func serve(ctx context.Context, server *ttrpc.Server, path string) error {
-	l, err := serveListener(path)
-	if err != nil {
-		return err
+/*
+getListener either opens a new socket to listen on, or takes the acceptor socket
+it got passed when restarted.
+*/
+func (s *Client) getListener(laddr string) (l net.Listener, err error) {
+	if s.isChild {
+		f := os.NewFile(uintptr(3), "")
+		l, err = net.FileListener(f)
+		if err != nil {
+			err = fmt.Errorf("net.FileListener error: %v", err)
+			return
+		}
+	} else {
+		l, err = serveListener(laddr)
+		if err != nil {
+			return
+		}
+
+		unixListener, ok := l.(*net.UnixListener)
+		if !ok {
+			err = errors.New("this isn't a unix socket listener")
+			return
+		}
+
+		s.listenFile, err = unixListener.File()
 	}
+	return
+}
+
+func (s *Client) upgradeFork() (err error) {
+	// only one server instance should fork!
+	if upgradeForked {
+		return errors.New("Another process already forked. Ignoring this one.")
+	}
+
+	upgradeForked = true
+
+	cmd, err := newCommand(namespaceFlag, containerdBinaryFlag, idFlag, addressFlag)
+	if err != nil {
+		return
+	}
+
+	cmd.ExtraFiles = append(cmd.ExtraFiles, s.listenFile)
+
+	if err = cmd.Start(); err != nil {
+		return
+	}
+	defer func() {
+		if err != nil {
+			cmd.Process.Kill()
+		}
+	}()
+
+	// make sure to wait after start
+	go cmd.Wait()
+	err = WritePidFile("shim.pid", cmd.Process.Pid)
+
+	return
+}
+
+// serve serves the ttrpc API over a unix socket at the provided net listener
+// this function does not block
+func serve(ctx context.Context, server *ttrpc.Server, l net.Listener) error {
 	go func() {
 		defer l.Close()
 		if err := server.Serve(ctx, l); err != nil &&

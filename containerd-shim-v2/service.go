@@ -68,6 +68,7 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 	katautils.SetLogger(ctx, logger, logger.Logger.Level)
 
 	ctx, cancel := context.WithCancel(ctx)
+	isChild := os.Getenv("CONTAINERD_SHIMV2_CONTINUE") != ""
 
 	s := &service{
 		id:         id,
@@ -78,8 +79,24 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 		ec:         make(chan exit, bufferSize),
 		cancel:     cancel,
 		mount:      false,
+		isChild:    isChild,
 	}
 
+	if s.isChild {
+		sandbox, err := vci.FetchSandbox(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		s.sandbox = sandbox
+		for  _, c := range sandbox.GetAllContainers() {
+			s.containers[c.ID()] = &container{
+				id: c.ID(),
+				execs:    make(map[string]*exec),
+				exitIOch: make(chan struct{}),
+				exitCh:   make(chan uint32, 1),
+			}
+		}
+	}
 	go s.processExits()
 
 	go s.forward(publisher)
@@ -108,6 +125,7 @@ type service struct {
 	// if the container's rootfs is block device backed, kata shimv2
 	// will not do the rootfs mount.
 	mount bool
+	isChild bool
 
 	ctx        context.Context
 	sandbox    vc.VCSandbox
@@ -647,6 +665,11 @@ func (s *service) Kill(ctx context.Context, r *taskAPI.KillRequest) (_ *ptypes.E
 	defer s.mu.Unlock()
 
 	signum := syscall.Signal(r.Signal)
+
+	if signum == syscall.SIGKILL {
+		logrus.Infof("====================get kill signal")
+		syscall.Exit(0)
+	}
 
 	c, err := s.getContainer(r.ID)
 	if err != nil {

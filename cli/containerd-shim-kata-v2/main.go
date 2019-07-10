@@ -13,6 +13,7 @@ import (
 func shimConfig(config *shim.Config) {
 	config.NoReaper = true
 	config.NoSubreaper = true
+	config.Upgrade =  true
 }
 
 func main() {
