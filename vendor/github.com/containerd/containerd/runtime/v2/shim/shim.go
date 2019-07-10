@@ -32,7 +32,6 @@ import (
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/namespaces"
 	shimapi "github.com/containerd/containerd/runtime/v2/task"
-	"github.com/containerd/ttrpc"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -44,6 +43,7 @@ type Client struct {
 	context context.Context
 	signals chan os.Signal
 	listenFile *os.File
+	unixConFile *os.File
 	isChild bool
 }
 
@@ -243,24 +243,44 @@ func (s *Client) Serve() error {
 	logrus.Debug("registering ttrpc server")
 	shimapi.RegisterTaskService(server, s.service)
 
-	l,  err := s.getListener(socketFlag)
-	if err != nil  {
-		return err
+	if s.isChild {
+		unixCon, err := net.FileConn(s.unixConFile)
+		if err != nil {
+			return errors.WithMessage(err, "failed to get a netCon from unixConfFile")
+		}
+		err = server.ServeCon(s.context, unixCon)
+		if err != nil {
+			return err
+		}
+
+		logrus.Info("----------------send term signal to parent")
+		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
+
+	} else {
+		l, err := serveListener(socketFlag)
+		if err != nil {
+			return err
+		}
+
+		go func() {
+			unixConinterface, err := server.Serve(s.context, l)
+			if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+				logrus.WithError(err).Fatal("containerd-shim: ttrpc server failure")
+			}
+			unixCon, ok := unixConinterface.(*net.UnixConn)
+
+			if ok {
+				s.unixConFile, _ = unixCon.File()
+			}
+
+		}()
 	}
 
-	if err := serve(s.context, server, l); err != nil {
-		return err
-	}
 	logger := logrus.WithFields(logrus.Fields{
 		"pid":       os.Getpid(),
 		"path":      path,
 		"namespace": namespaceFlag,
 	})
-
-	if s.isChild {
-		logrus.Info("----------------send term signal to parent")
-		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
-	}
 
 	go func() {
 		for range dump {
@@ -268,35 +288,6 @@ func (s *Client) Serve() error {
 		}
 	}()
 	return handleSignals(s, logger)
-}
-
-/*
-getListener either opens a new socket to listen on, or takes the acceptor socket
-it got passed when restarted.
-*/
-func (s *Client) getListener(laddr string) (l net.Listener, err error) {
-	if s.isChild {
-		f := os.NewFile(uintptr(3), "")
-		l, err = net.FileListener(f)
-		if err != nil {
-			err = fmt.Errorf("net.FileListener error: %v", err)
-			return
-		}
-	} else {
-		l, err = serveListener(laddr)
-		if err != nil {
-			return
-		}
-
-		unixListener, ok := l.(*net.UnixListener)
-		if !ok {
-			err = errors.New("this isn't a unix socket listener")
-			return
-		}
-
-		s.listenFile, err = unixListener.File()
-	}
-	return
 }
 
 func (s *Client) upgradeFork() (err error) {
@@ -312,7 +303,7 @@ func (s *Client) upgradeFork() (err error) {
 		return
 	}
 
-	cmd.ExtraFiles = append(cmd.ExtraFiles, s.listenFile)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, s.unixConFile)
 
 	if err = cmd.Start(); err != nil {
 		return
@@ -328,19 +319,6 @@ func (s *Client) upgradeFork() (err error) {
 	err = WritePidFile("shim.pid", cmd.Process.Pid)
 
 	return
-}
-
-// serve serves the ttrpc API over a unix socket at the provided net listener
-// this function does not block
-func serve(ctx context.Context, server *ttrpc.Server, l net.Listener) error {
-	go func() {
-		defer l.Close()
-		if err := server.Serve(ctx, l); err != nil &&
-			!strings.Contains(err.Error(), "use of closed network connection") {
-			logrus.WithError(err).Fatal("containerd-shim: ttrpc server failure")
-		}
-	}()
-	return nil
 }
 
 func dumpStacks(logger *logrus.Entry) {

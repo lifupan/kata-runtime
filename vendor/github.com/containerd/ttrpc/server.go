@@ -67,7 +67,27 @@ func (s *Server) Register(name string, methods map[string]Method) {
 	s.services.register(name, methods)
 }
 
-func (s *Server) Serve(ctx context.Context, l net.Listener) error {
+func (s *Server) ServeCon(ctx context.Context, conn net.Conn) error {
+	var (
+		handshaker = s.config.handshaker
+	)
+
+	if handshaker == nil {
+		handshaker = handshakerFunc(noopHandshake)
+	}
+
+	approved, handshake, err := handshaker.Handshake(ctx, conn)
+	if err != nil {
+		conn.Close()
+		return errors.Wrap(err, "ttrpc: refusing connection with a ServeCon call")
+	}
+
+	sc := s.newConn(approved, handshake)
+	go sc.run(ctx)
+
+	return nil
+}
+func (s *Server) Serve(ctx context.Context, l net.Listener) (net.Conn, error) {
 	s.addListener(l)
 	defer s.closeListener(l)
 
@@ -85,7 +105,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		if err != nil {
 			select {
 			case <-s.done:
-				return ErrServerClosed
+				return nil, ErrServerClosed
 			default:
 			}
 
@@ -108,7 +128,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 				continue
 			}
 
-			return err
+			return nil, err
 		}
 
 		backoff = 0
@@ -122,6 +142,8 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 
 		sc := s.newConn(approved, handshake)
 		go sc.run(ctx)
+
+		return conn, nil
 	}
 }
 
