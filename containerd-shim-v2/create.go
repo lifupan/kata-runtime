@@ -13,9 +13,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/typeurl"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+	vcStore "github.com/kata-containers/runtime/virtcontainers/store"
 	"github.com/pkg/errors"
 
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
@@ -60,6 +62,12 @@ func create(ctx context.Context, s *service, r *taskAPI.CreateTaskRequest) (*con
 			return nil, fmt.Errorf("cannot create another sandbox in sandbox: %s", s.sandbox.ID())
 		}
 
+		s.store, err = vcStore.New(ctx, "file://" + bundlePath)
+		if err != nil {
+			logrus.WithError(err).Error("failed to create vcStore for shimv2")
+			return nil, err
+		}
+
 		_, err := loadRuntimeConfig(s, r)
 		if err != nil {
 			return nil, err
@@ -91,6 +99,7 @@ func create(ctx context.Context, s *service, r *taskAPI.CreateTaskRequest) (*con
 			return nil, err
 		}
 		s.sandbox = sandbox
+		s.containerStates = make(map[string]containerState)
 
 	case vc.PodContainer:
 		if s.sandbox == nil {
@@ -122,7 +131,22 @@ func create(ctx context.Context, s *service, r *taskAPI.CreateTaskRequest) (*con
 		return nil, err
 	}
 
-	return container, nil
+	cs := containerState{
+		Stdin:    r.Stdin,
+		Stdout:   r.Stdout,
+		Stderr:   r.Stderr,
+		Terminal: r.Terminal,
+		Bundle:   r.Bundle,
+		Status:   task.StatusCreated,
+		Execs:    make(map[string]execState),
+	}
+
+	s.containerStates[r.ID] = cs
+
+	if err = s.Store(); err != nil {
+		logrus.WithError(err).Error("failed to store shimv2 states")
+	}
+	return container, err
 }
 
 func loadSpec(r *taskAPI.CreateTaskRequest) (*oci.CompatOCISpec, string, error) {

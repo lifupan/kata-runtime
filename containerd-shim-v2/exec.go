@@ -35,13 +35,18 @@ type exec struct {
 	exitTime time.Time
 }
 
+type execState struct {
+	Tty tty `json:"tty"`
+	Status task.Status `json:"status"`
+}
+
 type tty struct {
-	stdin    string
-	stdout   string
-	stderr   string
-	height   uint32
-	width    uint32
-	terminal bool
+	Stdin    string `json:"stdin"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	Height   uint32 `json:"height"`
+	Width    uint32 `json:"width"`
+	Terminal bool `json:"terminal"`
 }
 
 func getEnvs(envs []string) []types.EnvVar {
@@ -88,12 +93,12 @@ func newExec(c *container, stdin, stdout, stderr string, terminal bool, jspec *g
 	}
 
 	tty := &tty{
-		stdin:    stdin,
-		stdout:   stdout,
-		stderr:   stderr,
-		height:   height,
-		width:    width,
-		terminal: terminal,
+		Stdin:    stdin,
+		Stdout:   stdout,
+		Stderr:   stderr,
+		Height:   height,
+		Width:    width,
+		Terminal: terminal,
 	}
 
 	cmds := &types.Cmd{

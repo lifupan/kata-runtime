@@ -35,6 +35,16 @@ type container struct {
 	terminal bool
 }
 
+type containerState struct {
+	Stdin    string `json:"stdin"`
+	Stdout   string `json:"stdout"`
+	Stderr   string	`json:"stderr"`
+	Status   task.Status `json:"status"`
+	Terminal bool `json:"terminal"`
+	Bundle   string `json:"bundle"`
+	Execs    map[string]execState `json:"Execs"`
+}
+
 func newContainer(s *service, r *taskAPI.CreateTaskRequest, containerType vc.ContainerType, spec *oci.CompatOCISpec) (*container, error) {
 	if r == nil {
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, " CreateTaskRequest points to nil")

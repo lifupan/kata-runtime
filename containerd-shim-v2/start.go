@@ -90,8 +90,8 @@ func startExec(ctx context.Context, s *service, containerID, execID string) (*ex
 	execs.id = proc.Token
 
 	execs.status = task.StatusRunning
-	if execs.tty.height != 0 && execs.tty.width != 0 {
-		err = s.sandbox.WinsizeProcess(c.id, execs.id, execs.tty.height, execs.tty.width)
+	if execs.tty.Height != 0 && execs.tty.Width != 0 {
+		err = s.sandbox.WinsizeProcess(c.id, execs.id, execs.tty.Height, execs.tty.Width)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +101,7 @@ func startExec(ctx context.Context, s *service, containerID, execID string) (*ex
 	if err != nil {
 		return nil, err
 	}
-	tty, err := newTtyIO(ctx, execs.tty.stdin, execs.tty.stdout, execs.tty.stderr, execs.tty.terminal)
+	tty, err := newTtyIO(ctx, execs.tty.Stdin, execs.tty.Stdout, execs.tty.Stderr, execs.tty.Terminal)
 	if err != nil {
 		return nil, err
 	}

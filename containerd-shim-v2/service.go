@@ -24,6 +24,7 @@ import (
 	"github.com/kata-containers/runtime/pkg/katautils"
 	vc "github.com/kata-containers/runtime/virtcontainers"
 	"github.com/kata-containers/runtime/virtcontainers/pkg/oci"
+	vcStore "github.com/kata-containers/runtime/virtcontainers/store"
 	"github.com/kata-containers/runtime/virtcontainers/types"
 	"github.com/opencontainers/runtime-spec/specs-go"
 
@@ -88,9 +89,9 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 			return nil, err
 		}
 		s.sandbox = sandbox
-		for  _, c := range sandbox.GetAllContainers() {
+		for _, c := range sandbox.GetAllContainers() {
 			s.containers[c.ID()] = &container{
-				id: c.ID(),
+				id:       c.ID(),
 				execs:    make(map[string]*exec),
 				exitIOch: make(chan struct{}),
 				exitCh:   make(chan uint32, 1),
@@ -124,14 +125,16 @@ type service struct {
 
 	// if the container's rootfs is block device backed, kata shimv2
 	// will not do the rootfs mount.
-	mount bool
+	mount   bool
 	isChild bool
 
-	ctx        context.Context
-	sandbox    vc.VCSandbox
-	containers map[string]*container
-	config     *oci.RuntimeConfig
-	events     chan interface{}
+	ctx             context.Context
+	sandbox         vc.VCSandbox
+	containers      map[string]*container
+	config          *oci.RuntimeConfig
+	events          chan interface{}
+	containerStates map[string]containerState
+	store           *vcStore.Store
 
 	cancel func()
 
@@ -399,12 +402,15 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (_ *taskAP
 	s.eventSendMu.Lock()
 	defer s.eventSendMu.Unlock()
 
+	cs := s.containerStates[r.ID]
 	//start a container
 	if r.ExecID == "" {
 		err = startContainer(ctx, s, c)
 		if err != nil {
 			return nil, errdefs.ToGRPC(err)
 		}
+		cs.Status = task.StatusRunning
+		s.containerStates[r.ID] = cs
 		s.send(&eventstypes.TaskStart{
 			ContainerID: c.id,
 			Pid:         s.pid,
@@ -415,6 +421,12 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (_ *taskAP
 		if err != nil {
 			return nil, errdefs.ToGRPC(err)
 		}
+
+		execs := cs.Execs[r.ExecID]
+		execs.Status = task.StatusRunning
+		cs.Execs[r.ExecID] = execs
+		s.containerStates[r.ID] = cs
+
 		s.send(&eventstypes.TaskExecStarted{
 			ContainerID: c.id,
 			ExecID:      r.ExecID,
@@ -422,9 +434,13 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (_ *taskAP
 		})
 	}
 
+	if err = s.Store(); err != nil {
+		logrus.WithError(err).Error("failed to store shimv2 states")
+	}
+
 	return &taskAPI.StartResponse{
 		Pid: s.pid,
-	}, nil
+	}, err
 }
 
 // Delete the initial process and container
@@ -446,6 +462,11 @@ func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (_ *task
 			return nil, err
 		}
 
+		delete(s.containerStates, r.ID)
+		if err = s.Store(); err != nil {
+			logrus.WithError(err).Error("failed to store shimv2 states")
+		}
+
 		s.send(&eventstypes.TaskDelete{
 			ContainerID: c.id,
 			Pid:         s.pid,
@@ -457,7 +478,7 @@ func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (_ *task
 			ExitStatus: c.exit,
 			ExitedAt:   c.exitTime,
 			Pid:        s.pid,
-		}, nil
+		}, err
 	}
 	//deal with the exec case
 	execs, err := c.getExec(r.ExecID)
@@ -466,6 +487,13 @@ func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (_ *task
 	}
 
 	delete(c.execs, r.ExecID)
+
+	cs := s.containerStates[r.ID]
+	delete(cs.Execs, r.ExecID)
+	s.containerStates[r.ID] = cs
+	if err = s.Store(); err != nil {
+		logrus.WithError(err).Error("failed to store shimv2 states")
+	}
 
 	return &taskAPI.DeleteResponse{
 		ExitStatus: uint32(execs.exitCode),
@@ -499,6 +527,23 @@ func (s *service) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (_ *p
 
 	c.execs[r.ExecID] = execs
 
+	cs := s.containerStates[r.ID]
+	exec := execState{
+		Tty: tty{
+			Stdin: r.Stdin,
+			Stdout: r.Stdout,
+			Stderr: r.Stderr,
+			Terminal: r.Terminal,
+		},
+		Status: task.StatusCreated,
+	}
+	cs.Execs[r.ExecID] = exec
+	s.containerStates[r.ID] = cs
+
+	if err = s.Store(); err != nil {
+		logrus.WithError(err).Error("failed to store shimv2 states")
+	}
+
 	s.send(&eventstypes.TaskExecAdded{
 		ContainerID: c.id,
 		ExecID:      r.ExecID,
@@ -527,8 +572,8 @@ func (s *service) ResizePty(ctx context.Context, r *taskAPI.ResizePtyRequest) (_
 		if err != nil {
 			return nil, err
 		}
-		execs.tty.height = r.Height
-		execs.tty.width = r.Width
+		execs.tty.Height = r.Height
+		execs.tty.Width = r.Width
 
 		processID = execs.id
 
@@ -580,10 +625,10 @@ func (s *service) State(ctx context.Context, r *taskAPI.StateRequest) (_ *taskAP
 		Bundle:     c.bundle,
 		Pid:        s.pid,
 		Status:     execs.status,
-		Stdin:      execs.tty.stdin,
-		Stdout:     execs.tty.stdout,
-		Stderr:     execs.tty.stderr,
-		Terminal:   execs.tty.terminal,
+		Stdin:      execs.tty.Stdin,
+		Stdout:     execs.tty.Stdout,
+		Stderr:     execs.tty.Stderr,
+		Terminal:   execs.tty.Terminal,
 		ExitStatus: uint32(execs.exitCode),
 	}, nil
 
@@ -614,6 +659,14 @@ func (s *service) Pause(ctx context.Context, r *taskAPI.PauseRequest) (_ *ptypes
 	c.status, err = s.getContainerStatus(c.id)
 	if err != nil {
 		c.status = task.StatusUnknown
+	}
+
+	cs := s.containerStates[r.ID]
+	cs.Status = c.status
+	s.containerStates[r.ID] = cs
+
+	if err = s.Store(); err != nil {
+		logrus.WithError(err).Error("failed to store shimv2 states")
 	}
 
 	s.send(&eventstypes.TaskPaused{
@@ -648,6 +701,14 @@ func (s *service) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (_ *ptyp
 		c.status = task.StatusUnknown
 	}
 
+	cs := s.containerStates[r.ID]
+	cs.Status = c.status
+	s.containerStates[r.ID] = cs
+
+	if err = s.Store(); err != nil {
+		logrus.WithError(err).Error("failed to store shimv2 states")
+	}
+
 	s.send(&eventstypes.TaskResumed{
 		ContainerID: c.id,
 	})
@@ -668,7 +729,6 @@ func (s *service) Kill(ctx context.Context, r *taskAPI.KillRequest) (_ *ptypes.E
 
 	if signum == syscall.SIGKILL {
 		logrus.Infof("====================get kill signal")
-		syscall.Exit(0)
 	}
 
 	c, err := s.getContainer(r.ID)
@@ -737,12 +797,19 @@ func (s *service) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (_ *pt
 	}
 
 	tty := c.ttyio
+	cs := s.containerStates[r.ID]
 	if r.ExecID != "" {
 		execs, err := c.getExec(r.ExecID)
 		if err != nil {
 			return nil, err
 		}
 		tty = execs.ttyio
+
+		exec := cs.Execs[r.ExecID]
+		exec.Tty.Stdin = ""
+		cs.Execs[r.ExecID] = exec
+	} else {
+		cs.Stdin = ""
 	}
 
 	if tty != nil && tty.Stdin != nil {
@@ -751,7 +818,12 @@ func (s *service) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (_ *pt
 		}
 	}
 
-	return empty, nil
+	s.containerStates[r.ID] = cs
+	if err = s.Store(); err != nil {
+		logrus.WithError(err).Error("failed to store shimv2 states")
+	}
+
+	return empty, err
 }
 
 // Checkpoint the container
@@ -944,4 +1016,8 @@ func (s *service) getContainerStatus(containerID string) (task.Status, error) {
 	}
 
 	return status, nil
+}
+
+func (s *service) Store() error {
+	return s.store.Store(vcStore.State, s.containerStates)
 }
