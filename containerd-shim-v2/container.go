@@ -6,6 +6,7 @@
 package containerdshim
 
 import (
+	"context"
 	"time"
 
 	"github.com/containerd/containerd/api/types/task"
@@ -36,12 +37,12 @@ type container struct {
 }
 
 type containerState struct {
-	Stdin    string `json:"stdin"`
-	Stdout   string `json:"stdout"`
-	Stderr   string	`json:"stderr"`
-	Status   task.Status `json:"status"`
-	Terminal bool `json:"terminal"`
-	Bundle   string `json:"bundle"`
+	Stdin    string               `json:"stdin"`
+	Stdout   string               `json:"stdout"`
+	Stderr   string               `json:"stderr"`
+	Status   task.Status          `json:"status"`
+	Terminal bool                 `json:"terminal"`
+	Bundle   string               `json:"bundle"`
 	Execs    map[string]execState `json:"Execs"`
 }
 
@@ -71,4 +72,28 @@ func newContainer(s *service, r *taskAPI.CreateTaskRequest, containerType vc.Con
 		exitCh:   make(chan uint32, 1),
 	}
 	return c, nil
+}
+
+func (c *container) ioCopyWait(ctx context.Context, s *service) error {
+	stdin, stdout, stderr, err := s.sandbox.IOStream(c.id, c.id)
+	if err != nil {
+		return err
+	}
+
+	if c.stdin != "" || c.stdout != "" || c.stderr != "" {
+		tty, err := newTtyIO(ctx, c.stdin, c.stdout, c.stderr, c.terminal)
+		if err != nil {
+			return err
+		}
+		c.ttyio = tty
+		go ioCopy(c.exitIOch, tty, stdin, stdout, stderr)
+	} else {
+		//close the io exit channel, since there is no io for this container,
+		//otherwise the following wait goroutine will hang on this channel.
+		close(c.exitIOch)
+	}
+
+	go wait(s, c, "")
+
+	return nil
 }

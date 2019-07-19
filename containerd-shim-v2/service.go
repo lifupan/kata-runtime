@@ -398,9 +398,9 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (_ *taskAP
 	cs := s.containerStates[r.ID]
 	//start a container
 	if r.ExecID == "" {
-		err = startContainer(ctx, s, c)
+		err = c.startContainer(ctx, s)
 		if err != nil {
-			return nil, errdefs.ToGRPC(err)
+			return nil, err
 		}
 		cs.Status = task.StatusRunning
 		s.containerStates[r.ID] = cs
@@ -409,14 +409,19 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (_ *taskAP
 			Pid:         s.pid,
 		})
 	} else {
-		//start an exec
-		_, err = startExec(ctx, s, r.ID, r.ExecID)
+		exec, err := c.getExec(r.ExecID)
 		if err != nil {
-			return nil, errdefs.ToGRPC(err)
+			return nil, err
+		}
+		//start an exec
+		err = exec.startExec(ctx, s, r.ID, r.ExecID)
+		if err != nil {
+			return nil, err
 		}
 
 		execs := cs.Execs[r.ExecID]
 		execs.Status = task.StatusRunning
+		execs.Id = exec.id
 		cs.Execs[r.ExecID] = execs
 		s.containerStates[r.ID] = cs
 
@@ -523,9 +528,9 @@ func (s *service) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (_ *p
 	cs := s.containerStates[r.ID]
 	exec := execState{
 		Tty: tty{
-			Stdin: r.Stdin,
-			Stdout: r.Stdout,
-			Stderr: r.Stderr,
+			Stdin:    r.Stdin,
+			Stdout:   r.Stdout,
+			Stderr:   r.Stderr,
 			Terminal: r.Terminal,
 		},
 		Status: task.StatusCreated,
@@ -1015,7 +1020,7 @@ func (s *service) Store() error {
 	return s.store.Store(vcStore.State, s.containerStates)
 }
 
-func (s *service)loadShimv2(ctx context.Context, id string) error {
+func (s *service) loadShimv2(ctx context.Context, id string) error {
 	sandbox, err := vci.FetchSandbox(ctx, id)
 	if err != nil {
 		return err
@@ -1027,7 +1032,7 @@ func (s *service)loadShimv2(ctx context.Context, id string) error {
 		return err
 	}
 
-	s.store, err = vcStore.New(ctx, storeScheme + cwd)
+	s.store, err = vcStore.New(ctx, storeScheme+cwd)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create the shimv2 store")
 		return err
@@ -1049,9 +1054,9 @@ func (s *service)loadShimv2(ctx context.Context, id string) error {
 		}
 
 		c := &container{
-			s: s,
+			s:        s,
 			id:       virtc.ID(),
-			bundle: cs.Bundle,
+			bundle:   cs.Bundle,
 			stdin:    cs.Stdin,
 			stdout:   cs.Stdout,
 			stderr:   cs.Stderr,
@@ -1068,10 +1073,20 @@ func (s *service)loadShimv2(ctx context.Context, id string) error {
 				return err
 			}
 			execs[id] = ex
+
+			if err = ex.ioCopyWait(ctx, s, id); err != nil {
+				logrus.WithField("container", virtc.ID()).WithField("exec", id).Error("failed to restore iocopy and wait")
+				return err
+			}
 		}
 
 		c.execs = execs
 		s.containers[virtc.ID()] = c
+
+		if err = c.ioCopyWait(ctx, s); err != nil {
+			logrus.WithField("container", virtc.ID()).Error("failed to restore iocopy and wait")
+			return err
+		}
 	}
 
 	return nil

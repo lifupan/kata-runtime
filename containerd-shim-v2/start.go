@@ -8,12 +8,11 @@ package containerdshim
 import (
 	"context"
 	"fmt"
-
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/kata-containers/runtime/pkg/katautils"
 )
 
-func startContainer(ctx context.Context, s *service, c *container) error {
+func (c *container) startContainer(ctx context.Context, s *service) error {
 	//start a container
 	if c.cType == "" {
 		err := fmt.Errorf("Bug, the container %s type is empty", c.id)
@@ -46,70 +45,28 @@ func startContainer(ctx context.Context, s *service, c *container) error {
 	}
 
 	c.status = task.StatusRunning
+	err = c.ioCopyWait(ctx, s)
 
-	stdin, stdout, stderr, err := s.sandbox.IOStream(c.id, c.id)
-	if err != nil {
-		return err
-	}
-
-	if c.stdin != "" || c.stdout != "" || c.stderr != "" {
-		tty, err := newTtyIO(ctx, c.stdin, c.stdout, c.stderr, c.terminal)
-		if err != nil {
-			return err
-		}
-		c.ttyio = tty
-		go ioCopy(c.exitIOch, tty, stdin, stdout, stderr)
-	} else {
-		//close the io exit channel, since there is no io for this container,
-		//otherwise the following wait goroutine will hang on this channel.
-		close(c.exitIOch)
-	}
-
-	go wait(s, c, "")
-
-	return nil
+	return err
 }
 
-func startExec(ctx context.Context, s *service, containerID, execID string) (*exec, error) {
-	//start an exec
-	c, err := s.getContainer(containerID)
-	if err != nil {
-		return nil, err
-	}
-
-	execs, err := c.getExec(execID)
-	if err != nil {
-		return nil, err
-	}
-
+func (execs *exec) startExec(ctx context.Context, s *service, containerID, execID string) error {
 	_, proc, err := s.sandbox.EnterContainer(containerID, *execs.cmds)
 	if err != nil {
 		err := fmt.Errorf("cannot enter container %s, with err %s", containerID, err)
-		return nil, err
+		return err
 	}
 	execs.id = proc.Token
 
 	execs.status = task.StatusRunning
 	if execs.tty.Height != 0 && execs.tty.Width != 0 {
-		err = s.sandbox.WinsizeProcess(c.id, execs.id, execs.tty.Height, execs.tty.Width)
+		err = s.sandbox.WinsizeProcess(containerID, execs.id, execs.tty.Height, execs.tty.Width)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	stdin, stdout, stderr, err := s.sandbox.IOStream(c.id, execs.id)
-	if err != nil {
-		return nil, err
-	}
-	tty, err := newTtyIO(ctx, execs.tty.Stdin, execs.tty.Stdout, execs.tty.Stderr, execs.tty.Terminal)
-	if err != nil {
-		return nil, err
-	}
-	execs.ttyio = tty
+	err = execs.ioCopyWait(ctx, s, execID)
 
-	go ioCopy(execs.exitIOch, tty, stdin, stdout, stderr)
-
-	go wait(s, c, execID)
-
-	return execs, nil
+	return err
 }

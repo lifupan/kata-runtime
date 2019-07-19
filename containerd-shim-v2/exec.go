@@ -6,6 +6,7 @@
 package containerdshim
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -36,7 +37,8 @@ type exec struct {
 }
 
 type execState struct {
-	Tty tty `json:"tty"`
+	Id     string      `json:"id"`
+	Tty    tty         `json:"tty"`
 	Status task.Status `json:"status"`
 }
 
@@ -46,7 +48,7 @@ type tty struct {
 	Stderr   string `json:"stderr"`
 	Height   uint32 `json:"height"`
 	Width    uint32 `json:"width"`
-	Terminal bool `json:"terminal"`
+	Terminal bool   `json:"terminal"`
 }
 
 func getEnvs(envs []string) []types.EnvVar {
@@ -140,4 +142,24 @@ func (c *container) getExec(id string) (*exec, error) {
 	}
 
 	return exec, nil
+}
+
+func (e *exec) ioCopyWait(ctx context.Context, s *service, execID string) error {
+	c := e.container
+
+	stdin, stdout, stderr, err := s.sandbox.IOStream(c.id, e.id)
+	if err != nil {
+		return err
+	}
+	tty, err := newTtyIO(ctx, e.tty.Stdin, e.tty.Stdout, e.tty.Stderr, e.tty.Terminal)
+	if err != nil {
+		return err
+	}
+	e.ttyio = tty
+
+	go ioCopy(e.exitIOch, tty, stdin, stdout, stderr)
+
+	go wait(s, c, execID)
+
+	return nil
 }
