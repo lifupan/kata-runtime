@@ -68,28 +68,42 @@ func getEnvs(envs []string) []types.EnvVar {
 	return vcEnvs
 }
 
-func newExec(c *container, stdin, stdout, stderr string, terminal bool, jspec *googleProtobuf.Any) (*exec, error) {
+func newExec(c *container, stdin, stdout, stderr string, terminal, init bool, jspec *googleProtobuf.Any) (*exec, error) {
 	var height uint32
 	var width uint32
+	var cmds *types.Cmd
 
-	if jspec == nil {
+	if init && jspec == nil {
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "googleProtobuf.Any points to nil")
 	}
 
-	// process exec request
-	var spec *specs.Process
-	v, err := typeurl.UnmarshalAny(jspec)
-	if err != nil {
-		return nil, err
-	}
-	spec, ok := v.(*specs.Process)
-	if !ok {
-		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "Get an invalid spec type")
-	}
+	if jspec != nil {
+		// process exec request
+		var spec *specs.Process
+		v, err := typeurl.UnmarshalAny(jspec)
+		if err != nil {
+			return nil, err
+		}
+		spec, ok := v.(*specs.Process)
+		if !ok {
+			return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, "Get an invalid spec type")
+		}
 
-	if spec.ConsoleSize != nil {
-		height = uint32(spec.ConsoleSize.Height)
-		width = uint32(spec.ConsoleSize.Width)
+		if spec.ConsoleSize != nil {
+			height = uint32(spec.ConsoleSize.Height)
+			width = uint32(spec.ConsoleSize.Width)
+		}
+
+		cmds = &types.Cmd{
+			Args:            spec.Args,
+			Envs:            getEnvs(spec.Env),
+			User:            fmt.Sprintf("%d", spec.User.UID),
+			PrimaryGroup:    fmt.Sprintf("%d", spec.User.GID),
+			WorkDir:         spec.Cwd,
+			Interactive:     terminal,
+			Detach:          !terminal,
+			NoNewPrivileges: spec.NoNewPrivileges,
+		}
 	}
 
 	tty := &tty{
@@ -99,17 +113,6 @@ func newExec(c *container, stdin, stdout, stderr string, terminal bool, jspec *g
 		Height:   height,
 		Width:    width,
 		Terminal: terminal,
-	}
-
-	cmds := &types.Cmd{
-		Args:            spec.Args,
-		Envs:            getEnvs(spec.Env),
-		User:            fmt.Sprintf("%d", spec.User.UID),
-		PrimaryGroup:    fmt.Sprintf("%d", spec.User.GID),
-		WorkDir:         spec.Cwd,
-		Interactive:     terminal,
-		Detach:          !terminal,
-		NoNewPrivileges: spec.NoNewPrivileges,
 	}
 
 	exec := &exec{

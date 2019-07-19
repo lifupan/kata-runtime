@@ -62,7 +62,7 @@ func create(ctx context.Context, s *service, r *taskAPI.CreateTaskRequest) (*con
 			return nil, fmt.Errorf("cannot create another sandbox in sandbox: %s", s.sandbox.ID())
 		}
 
-		s.store, err = vcStore.New(ctx, "file://" + bundlePath)
+		s.store, err = vcStore.New(ctx, storeScheme + bundlePath)
 		if err != nil {
 			logrus.WithError(err).Error("failed to create vcStore for shimv2")
 			return nil, err

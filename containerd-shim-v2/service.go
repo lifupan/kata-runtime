@@ -48,6 +48,8 @@ const (
 	// A time span used to wait for publish a containerd event,
 	// once it costs a longer time than timeOut, it will be canceld.
 	timeOut = 5 * time.Second
+
+	storeScheme = "file://"
 )
 
 var (
@@ -84,20 +86,11 @@ func New(ctx context.Context, id string, publisher events.Publisher) (cdshim.Shi
 	}
 
 	if s.isChild {
-		sandbox, err := vci.FetchSandbox(ctx, id)
-		if err != nil {
+		if err := s.loadShimv2(ctx, id); err != nil {
 			return nil, err
 		}
-		s.sandbox = sandbox
-		for _, c := range sandbox.GetAllContainers() {
-			s.containers[c.ID()] = &container{
-				id:       c.ID(),
-				execs:    make(map[string]*exec),
-				exitIOch: make(chan struct{}),
-				exitCh:   make(chan uint32, 1),
-			}
-		}
 	}
+
 	go s.processExits()
 
 	go s.forward(publisher)
@@ -520,7 +513,7 @@ func (s *service) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (_ *p
 		return nil, errdefs.ToGRPCf(errdefs.ErrAlreadyExists, "id %s", r.ExecID)
 	}
 
-	execs, err := newExec(c, r.Stdin, r.Stdout, r.Stderr, r.Terminal, r.Spec)
+	execs, err := newExec(c, r.Stdin, r.Stdout, r.Stderr, r.Terminal, true, r.Spec)
 	if err != nil {
 		return nil, errdefs.ToGRPC(err)
 	}
@@ -1020,4 +1013,66 @@ func (s *service) getContainerStatus(containerID string) (task.Status, error) {
 
 func (s *service) Store() error {
 	return s.store.Store(vcStore.State, s.containerStates)
+}
+
+func (s *service)loadShimv2(ctx context.Context, id string) error {
+	sandbox, err := vci.FetchSandbox(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.sandbox = sandbox
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	s.store, err = vcStore.New(ctx, storeScheme + cwd)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to create the shimv2 store")
+		return err
+	}
+
+	s.containerStates = make(map[string]containerState)
+
+	err = s.store.Load(vcStore.State, &(s.containerStates))
+	if err != nil {
+		logrus.WithError(err).Error("Failed to load the shimv2 store")
+		return err
+	}
+
+	for _, virtc := range sandbox.GetAllContainers() {
+		cs, ok := s.containerStates[virtc.ID()]
+		if !ok {
+			logrus.WithField("container", virtc.ID()).Error("didn't find the container in store")
+			return err
+		}
+
+		c := &container{
+			s: s,
+			id:       virtc.ID(),
+			bundle: cs.Bundle,
+			stdin:    cs.Stdin,
+			stdout:   cs.Stdout,
+			stderr:   cs.Stderr,
+			terminal: cs.Terminal,
+			status:   cs.Status,
+			exitIOch: make(chan struct{}),
+			exitCh:   make(chan uint32, 1),
+		}
+
+		execs := make(map[string]*exec)
+		for id, es := range cs.Execs {
+			ex, err := newExec(c, es.Tty.Stdin, es.Tty.Stdout, es.Tty.Stderr, es.Tty.Terminal, false, nil)
+			if err != nil {
+				return err
+			}
+			execs[id] = ex
+		}
+
+		c.execs = execs
+		s.containers[virtc.ID()] = c
+	}
+
+	return nil
 }
