@@ -644,10 +644,14 @@ func filterDevices(c *Container, devices []ContainerDevice) (ret []ContainerDevi
 func (c *Container) createBlockDevices() error {
 	// iterate all mounts and create block device if it's block based.
 	for i, m := range c.mounts {
-		if len(m.BlockDeviceID) > 0 || m.Type != "bind" {
+		if len(m.BlockDeviceID) > 0 {
 			// Non-empty m.BlockDeviceID indicates there's already one device
 			// associated with the mount,so no need to create a new device for it
-			// and we only create block device for bind mount
+			continue
+		}
+
+		// Skip those /dev /proc etc mounting here.
+		if m.Type != "bind" && !utils.IsBlockFileSystem(m.Type) {
 			continue
 		}
 
@@ -658,19 +662,39 @@ func (c *Container) createBlockDevices() error {
 
 		// Check if mount is a block device file. If it is, the block device will be attached to the host
 		// instead of passing this as a shared mount.
-		if c.checkBlockDeviceSupport() && stat.Mode&unix.S_IFBLK == unix.S_IFBLK {
+		if c.checkBlockDeviceSupport() {
+			var major, minor int64
+			// real block device based mount
+			if stat.Mode&unix.S_IFBLK == unix.S_IFBLK {
+				major = int64(unix.Major(stat.Rdev))
+				minor = int64(unix.Minor(stat.Rdev))
+			} else if !(stat.Mode&unix.S_IFREG == unix.S_IFREG && utils.IsBlockFileSystem(m.Type)) {
+				continue
+			}
+
 			b, err := c.sandbox.devManager.NewDevice(config.DeviceInfo{
 				HostPath:      m.Source,
 				ContainerPath: m.Destination,
 				DevType:       "b",
-				Major:         int64(unix.Major(stat.Rdev)),
-				Minor:         int64(unix.Minor(stat.Rdev)),
+				Major:         major,
+				Minor:         minor,
 			})
 			if err != nil {
 				return fmt.Errorf("device manager failed to create new device for %q: %v", m.Source, err)
 			}
 
+			// attach mount device
+			if err := c.sandbox.devManager.AttachDevice(b.DeviceID(), c.sandbox); err != nil {
+				return err
+			}
+
 			c.mounts[i].BlockDeviceID = b.DeviceID()
+
+			if !c.sandbox.supportNewStore() {
+				if err := c.sandbox.storeSandboxDevices(); err != nil {
+					return err
+				}
+			}
 		}
 	}
 

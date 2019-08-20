@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -87,4 +88,26 @@ func FindContextID() (*os.File, uint64, error) {
 
 	vsockFd.Close()
 	return nil, 0, fmt.Errorf("Could not get a unique context ID for the vsock : %s", err)
+}
+
+// IsBlockFileSystem returns true if the given fs type is based on a block device.
+// Here check the fs Type, if it is one of ext[2-4], btrfs and xfs filesystem,
+// we assume this fs type is based an block device based filesystem.
+func IsBlockFileSystem(fsType string) bool {
+	fsType = strings.Trim(fsType, " ")
+	fsTyperPrefix := fsType[:len(fsType)-1]
+
+	switch fsTyperPrefix {
+	//ext2, ext3, ext4 filesystem
+	case "ext":
+		fallthrough
+	//btrfs filesystem
+	case "btrf":
+		fallthrough
+		//xfs filesystem
+	case "xf":
+		return true
+	default:
+		return false
+	}
 }

@@ -56,6 +56,9 @@ type Device interface {
 	// GetMajorMinor returns major and minor numbers
 	GetMajorMinor() (int64, int64)
 
+	// GetPath returns the host path
+	GetPath() string
+
 	// GetDeviceInfo returns device specific data used for hotplugging by hypervisor
 	// Caller could cast the return value to device specific struct
 	// e.g. Block device returns *config.BlockDrive and
