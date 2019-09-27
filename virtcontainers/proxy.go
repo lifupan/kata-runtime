@@ -157,7 +157,7 @@ func defaultProxyURL(id, socketType string) (string, error) {
 }
 
 func isProxyBuiltIn(pType ProxyType) bool {
-	return pType == KataBuiltInProxyType
+	return pType == KataBuiltInProxyType || pType == NoProxyType
 }
 
 // proxy is the virtcontainers proxy interface.

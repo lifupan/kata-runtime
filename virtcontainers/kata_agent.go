@@ -617,6 +617,7 @@ func (k *kataAgent) startProxy(sandbox *Sandbox) error {
 	defer span.Finish()
 
 	var err error
+	var agentURL string
 
 	if k.proxy == nil {
 		return errorMissingProxy
@@ -626,19 +627,27 @@ func (k *kataAgent) startProxy(sandbox *Sandbox) error {
 		return nil
 	}
 
+	// For both of the KataBuiltInProxyType and NoProxyType, if they are
+	// not consoleWatched, even the k.state.URL is not empty, it's still
+	// needs to start the proxy to watch the hypervisor's console if debug
+	// enabled.
 	if k.state.URL != "" {
-		k.Logger().WithFields(logrus.Fields{
-			"sandbox":   sandbox.id,
-			"proxy-pid": k.state.ProxyPid,
-			"proxy-url": k.state.URL,
-		}).Infof("proxy already started")
-		return nil
-	}
-
-	// Get agent socket path to provide it to the proxy.
-	agentURL, err := k.agentURL()
-	if err != nil {
-		return err
+		if k.proxyBuiltIn {
+			agentURL = k.state.URL
+		} else {
+			k.Logger().WithFields(logrus.Fields{
+				"sandbox":   sandbox.id,
+				"proxy-pid": k.state.ProxyPid,
+				"proxy-url": k.state.URL,
+			}).Infof("proxy already started")
+			return nil
+		}
+	} else {
+		// Get agent socket path to provide it to the proxy.
+		agentURL, err = k.agentURL()
+		if err != nil {
+			return err
+		}
 	}
 
 	consoleURL, err := sandbox.hypervisor.getSandboxConsole(sandbox.id)
@@ -1713,7 +1722,7 @@ func (k *kataAgent) connect() error {
 	}
 
 	k.Logger().WithField("url", k.state.URL).WithField("proxy", k.state.ProxyPid).Info("New client")
-	client, err := kataclient.NewAgentClient(k.ctx, k.state.URL, k.proxyBuiltIn)
+	client, err := kataclient.NewAgentClient(k.ctx, k.state.URL)
 	if err != nil {
 		k.dead = true
 		return err

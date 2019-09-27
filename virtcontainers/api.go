@@ -187,8 +187,8 @@ func FetchSandbox(ctx context.Context, sandboxID string) (VCSandbox, error) {
 		return nil, err
 	}
 
-	// If the proxy is KataBuiltInProxyType type, it needs to restart the proxy to watch the
-	// guest console if it hadn't been watched.
+	// If the proxy is builtIn, including KataBuiltInProxyType or NoProxyType type,
+	// it needs to restart the proxy to watch the guest console if it hadn't been watched.
 	if isProxyBuiltIn(s.config.ProxyType) {
 		err = s.startProxy()
 		if err != nil {
