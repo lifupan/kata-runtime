@@ -190,6 +190,7 @@ type kataAgent struct {
 	state          KataAgentState
 	keepConn       bool
 	proxyBuiltIn   bool
+	useVsock       bool
 	dynamicTracing bool
 	dead           bool
 	kmodules       []string
@@ -222,6 +223,10 @@ func (k *kataAgent) getVMPath(id string) string {
 
 func (k *kataAgent) getSharePath(id string) string {
 	return filepath.Join(kataHostSharedDir(), id)
+}
+
+func (k *kataAgent) longLiveConn() bool {
+	return k.keepConn
 }
 
 // KataAgentSetDefaultTraceConfigOptions validates agent trace options and
@@ -297,6 +302,7 @@ func (k *kataAgent) init(ctx context.Context, sandbox *Sandbox, config interface
 		disableVMShutdown = k.handleTraceSettings(c)
 		k.keepConn = c.LongLiveConn
 		k.kmodules = c.KernelModules
+		k.useVsock = c.UseVSock
 	default:
 		return false, vcTypes.ErrInvalidConfigType
 	}
@@ -350,6 +356,7 @@ func (k *kataAgent) internalConfigure(h hypervisor, id, sharePath string, builti
 	if config != nil {
 		switch c := config.(type) {
 		case KataAgentConfig:
+			k.useVsock = c.UseVSock
 			if k.vmSocket, err = h.generateSocket(id, c.UseVSock); err != nil {
 				return err
 			}
@@ -617,6 +624,7 @@ func (k *kataAgent) startProxy(sandbox *Sandbox) error {
 	defer span.Finish()
 
 	var err error
+	var agentURL string
 
 	if k.proxy == nil {
 		return errorMissingProxy
@@ -627,18 +635,25 @@ func (k *kataAgent) startProxy(sandbox *Sandbox) error {
 	}
 
 	if k.state.URL != "" {
-		k.Logger().WithFields(logrus.Fields{
-			"sandbox":   sandbox.id,
-			"proxy-pid": k.state.ProxyPid,
-			"proxy-url": k.state.URL,
-		}).Infof("proxy already started")
-		return nil
-	}
-
-	// Get agent socket path to provide it to the proxy.
-	agentURL, err := k.agentURL()
-	if err != nil {
-		return err
+		// For keepConn case, when k.state.URL isn't nil, it means shimv2 had disconnected from
+		// sandbox and try to relaunch sandbox again. Here it needs to start proxy again to watch
+		// the hypervisor console.
+		if k.keepConn {
+			agentURL = k.state.URL
+		} else {
+			k.Logger().WithFields(logrus.Fields{
+				"sandbox":   sandbox.id,
+				"proxy-pid": k.state.ProxyPid,
+				"proxy-url": k.state.URL,
+			}).Infof("proxy already started")
+			return nil
+		}
+	} else {
+		// Get agent socket path to provide it to the proxy.
+		agentURL, err = k.agentURL()
+		if err != nil {
+			return err
+		}
 	}
 
 	consoleURL, err := sandbox.hypervisor.getSandboxConsole(sandbox.id)
@@ -1713,7 +1728,7 @@ func (k *kataAgent) connect() error {
 	}
 
 	k.Logger().WithField("url", k.state.URL).WithField("proxy", k.state.ProxyPid).Info("New client")
-	client, err := kataclient.NewAgentClient(k.ctx, k.state.URL, k.proxyBuiltIn)
+	client, err := kataclient.NewAgentClient(k.ctx, k.state.URL, !k.useVsock)
 	if err != nil {
 		k.dead = true
 		return err
