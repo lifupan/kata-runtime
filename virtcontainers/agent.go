@@ -219,10 +219,10 @@ type agent interface {
 	resumeContainer(sandbox *Sandbox, c Container) error
 
 	// configure will update agent settings based on provided arguments
-	configure(h hypervisor, id, sharePath string, builtin bool, config interface{}) error
+	configure(h hypervisor, id, sharePath string, config interface{}) error
 
 	// configureFromGrpc will update agent settings based on provided arguments which from Grpc
-	configureFromGrpc(id string, builtin bool, config interface{}) error
+	configureFromGrpc(id string, config interface{}) error
 
 	// getVMPath will return the agent vm socket's directory path
 	getVMPath(id string) string

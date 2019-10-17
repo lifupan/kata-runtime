@@ -177,11 +177,11 @@ func (n *noopAgent) resumeContainer(sandbox *Sandbox, c Container) error {
 }
 
 // configHypervisor is the Noop agent hypervisor configuration implementation. It does nothing.
-func (n *noopAgent) configure(h hypervisor, id, sharePath string, builtin bool, config interface{}) error {
+func (n *noopAgent) configure(h hypervisor, id, sharePath string, config interface{}) error {
 	return nil
 }
 
-func (n *noopAgent) configureFromGrpc(id string, builtin bool, config interface{}) error {
+func (n *noopAgent) configureFromGrpc(id string, config interface{}) error {
 	return nil
 }
 

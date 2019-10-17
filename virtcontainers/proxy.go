@@ -156,10 +156,6 @@ func defaultProxyURL(id, socketType string) (string, error) {
 	}
 }
 
-func isProxyBuiltIn(pType ProxyType) bool {
-	return pType == KataBuiltInProxyType
-}
-
 // proxy is the virtcontainers proxy interface.
 type proxy interface {
 	// start launches a proxy instance with specified parameters, returning

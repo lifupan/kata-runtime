@@ -189,7 +189,6 @@ type kataAgent struct {
 	reqHandlers    map[string]reqFunc
 	state          KataAgentState
 	keepConn       bool
-	proxyBuiltIn   bool
 	useVsock       bool
 	dynamicTracing bool
 	dead           bool
@@ -317,8 +316,6 @@ func (k *kataAgent) init(ctx context.Context, sandbox *Sandbox, config interface
 		return false, err
 	}
 
-	k.proxyBuiltIn = isProxyBuiltIn(sandbox.config.ProxyType)
-
 	// Fetch agent runtime info.
 	if !sandbox.supportNewStore() {
 		if err := sandbox.store.Load(store.Agent, &k.state); err != nil {
@@ -351,7 +348,7 @@ func (k *kataAgent) capabilities() types.Capabilities {
 	return caps
 }
 
-func (k *kataAgent) internalConfigure(h hypervisor, id, sharePath string, builtin bool, config interface{}) error {
+func (k *kataAgent) internalConfigure(h hypervisor, id, sharePath string, config interface{}) error {
 	var err error
 	if config != nil {
 		switch c := config.(type) {
@@ -366,15 +363,11 @@ func (k *kataAgent) internalConfigure(h hypervisor, id, sharePath string, builti
 		}
 	}
 
-	if builtin {
-		k.proxyBuiltIn = true
-	}
-
 	return nil
 }
 
-func (k *kataAgent) configure(h hypervisor, id, sharePath string, builtin bool, config interface{}) error {
-	err := k.internalConfigure(h, id, sharePath, builtin, config)
+func (k *kataAgent) configure(h hypervisor, id, sharePath string, config interface{}) error {
+	err := k.internalConfigure(h, id, sharePath, config)
 	if err != nil {
 		return err
 	}
@@ -419,15 +412,15 @@ func (k *kataAgent) configure(h hypervisor, id, sharePath string, builtin bool, 
 	return h.addDevice(sharedVolume, fsDev)
 }
 
-func (k *kataAgent) configureFromGrpc(id string, builtin bool, config interface{}) error {
-	return k.internalConfigure(nil, id, "", builtin, config)
+func (k *kataAgent) configureFromGrpc(id string, config interface{}) error {
+	return k.internalConfigure(nil, id, "", config)
 }
 
 func (k *kataAgent) createSandbox(sandbox *Sandbox) error {
 	span, _ := k.trace("createSandbox")
 	defer span.Finish()
 
-	return k.configure(sandbox.hypervisor, sandbox.id, k.getSharePath(sandbox.id), k.proxyBuiltIn, sandbox.config.AgentConfig)
+	return k.configure(sandbox.hypervisor, sandbox.id, k.getSharePath(sandbox.id), sandbox.config.AgentConfig)
 }
 
 func cmdToKataProcess(cmd types.Cmd) (process *grpc.Process, err error) {

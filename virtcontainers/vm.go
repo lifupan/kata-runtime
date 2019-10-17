@@ -179,7 +179,7 @@ func NewVM(ctx context.Context, config VMConfig) (*VM, error) {
 	// 2. setup agent
 	agent := newAgent(config.AgentType)
 	vmSharePath := buildVMSharePath(id)
-	err = agent.configure(hypervisor, id, vmSharePath, isProxyBuiltIn(config.ProxyType), config.AgentConfig)
+	err = agent.configure(hypervisor, id, vmSharePath, config.AgentConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func NewVMFromGrpc(ctx context.Context, v *pb.GrpcVM, config VMConfig) (*VM, err
 	}
 
 	agent := newAgent(config.AgentType)
-	agent.configureFromGrpc(v.Id, isProxyBuiltIn(config.ProxyType), config.AgentConfig)
+	agent.configureFromGrpc(v.Id, config.AgentConfig)
 
 	proxy, err := newProxy(config.ProxyType)
 	if err != nil {
