@@ -740,26 +740,31 @@ func (s *service) CloseIO(ctx context.Context, r *taskAPI.CloseIORequest) (_ *pt
 	}()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	c, err := s.getContainer(r.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	tty := c.ttyio
+	stdin := c.stdinPipe
+	stdinCloser := c.stdinCloser
+
 	if r.ExecID != "" {
 		execs, err := c.getExec(r.ExecID)
 		if err != nil {
 			return nil, err
 		}
-		tty = execs.ttyio
+		stdin = execs.stdinPipe
+		stdinCloser = execs.stdinCloser
 	}
 
-	if tty != nil && tty.Stdin != nil {
-		if err := tty.Stdin.Close(); err != nil {
-			return nil, errors.Wrap(err, "close stdin")
-		}
+	s.mu.Unlock()
+
+	// wait until the stdin io copy terminated, otherwise
+	// some contents would not be forwarded to the process.
+	<-stdinCloser
+	if err := stdin.Close(); err != nil {
+		return nil, errors.Wrap(err, "close stdin")
 	}
 
 	return empty, nil
